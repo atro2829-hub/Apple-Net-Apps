@@ -194,9 +194,18 @@ jobs:
           ./gradlew assembleRelease
           cd ..
 
+          # Find and copy APK
           mkdir -p download
-          cp android/app/build/outputs/apk/release/app-release.apk download/app-release.apk
-          echo "✅ User APK built!"
+          APK_PATH=$(find android/app/build/outputs -name '*.apk' -type f | head -1)
+          if [ -n "$APK_PATH" ]; then
+            echo "Found APK at: $APK_PATH"
+            cp "$APK_PATH" download/app-release.apk
+            echo "✅ User APK built!"
+          else
+            echo "❌ User APK not found!"
+            find android/app/build/outputs -type f 2>/dev/null
+            exit 1
+          fi
 
       - name: 📱 Build Admin APK
         if: ${{ github.event.inputs.build_type != 'user' }}
@@ -301,9 +310,18 @@ jobs:
           ./gradlew assembleRelease
           cd ..
 
+          # Find and copy APK
           mkdir -p download
-          cp android/app/build/outputs/apk/release/app-release.apk download/admin-release.apk
-          echo "✅ Admin APK built!"
+          APK_PATH=$(find android/app/build/outputs -name '*.apk' -type f | head -1)
+          if [ -n "$APK_PATH" ]; then
+            echo "Found APK at: $APK_PATH"
+            cp "$APK_PATH" download/admin-release.apk
+            echo "✅ Admin APK built!"
+          else
+            echo "❌ Admin APK not found!"
+            find android/app/build/outputs -type f 2>/dev/null
+            exit 1
+          fi
 
       - name: 📤 Upload User APK
         if: ${{ github.event.inputs.build_type != 'admin' }}
