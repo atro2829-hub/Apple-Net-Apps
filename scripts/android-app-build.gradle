@@ -7,8 +7,8 @@ android {
         applicationId "APP_PACKAGE"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode VERSION_CODE
+        versionName "VERSION_NAME"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -16,17 +16,18 @@ android {
     }
     signingConfigs {
         release {
-            storeFile file('../keystore/apple-net.keystore')
+            storeFile file('../keystore/apple-net-2026.keystore')
             storePassword 'applenet2026'
-            keyAlias 'apple-net'
+            keyAlias 'applenet'
             keyPassword 'applenet2026'
         }
     }
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             signingConfig signingConfigs.release
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
             signingConfig signingConfigs.release
@@ -34,7 +35,7 @@ android {
     }
     bundle {
         language {
-            enableSplit = false
+            enableSplit = true
         }
         density {
             enableSplit = true
@@ -57,10 +58,10 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
-    
+
     // Firebase Cloud Messaging
     implementation "com.google.firebase:firebase-messaging:24.1.0"
-    
+
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

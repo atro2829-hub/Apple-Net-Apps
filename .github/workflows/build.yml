@@ -13,11 +13,13 @@ on:
 env:
   NODE_VERSION: '20'
   BUN_VERSION: '1.2.0'
+  VERSION_CODE: '2'
+  VERSION_NAME: '1.0.0'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: 📥 Checkout code
@@ -43,15 +45,22 @@ jobs:
       - name: 🔑 Decode keystore
         run: |
           mkdir -p keystore
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore/apple-net.keystore
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore/apple-net-2026.keystore
+          ls -la keystore/
 
       - name: 📄 Decode google-services.json
         run: |
           mkdir -p upload
-          echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > "upload/google-services (17).json"
+          echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > "upload/google-services.json"
 
-      - name: 🏗️ Build Next.js static export
+      # ──────────────────────────────────────────────────────────
+      # BUILD USER APP
+      # ──────────────────────────────────────────────────────────
+      - name: 🏗️ Build User App - Static Export
+        if: ${{ github.event.inputs.build_type != 'admin' }}
         run: |
+          echo "📱 Building USER APP static export..."
+
           # Create export config with optimizations
           cat > next.config.build.ts << 'EXPORTCONFIG'
           import type { NextConfig } from "next";
@@ -66,8 +75,6 @@ jobs:
               optimizePackageImports: [
                 "lucide-react",
                 "date-fns",
-                "@radix-ui/react-icons",
-                "recharts",
                 "framer-motion",
               ],
             },
@@ -82,43 +89,23 @@ jobs:
           # Remove API routes (not needed for static export)
           rm -rf src/app/api
 
-          # Build
+          # Remove admin pages from user app build (reduces bundle size)
+          rm -rf src/app/admin
+          rm -rf src/components/admin
+
+          # Build user app
           bun run build
 
           # Restore dev config
           cp next.config.dev.bak next.config.ts
           rm next.config.build.ts next.config.dev.bak
 
-      - name: 🔧 Prepare admin web directory
-        run: |
-          # Copy out/ to out-admin/
-          rm -rf out-admin
-          cp -r out out-admin
-
-          # CRITICAL FIX: Copy admin page content to root index.html
-          # This fixes the green screen issue in Capacitor
-          if [ -f out-admin/admin/index.html ]; then
-            cat out-admin/admin/index.html > out-admin/index.html
-            echo "✅ Admin root page set"
-          else
-            # Fallback redirect
-            cat > out-admin/index.html << 'REDIRECT'
-          <!DOCTYPE html>
-          <html lang="ar" dir="rtl">
-          <head>
-            <meta charset="utf-8">
-            <title>Apple.NET Admin</title>
-            <script>window.location.replace('/admin/');</script>
-          </head>
-          <body><p>جاري التحويل...</p></body>
-          </html>
-          REDIRECT
-          fi
+          echo "✅ User app static export completed"
 
       - name: 📱 Build User APK
         if: ${{ github.event.inputs.build_type != 'admin' }}
         run: |
-          echo "📱 Building USER APP (com.applenet.app)..."
+          echo "📱 Building USER APP APK (com.applenet.app)..."
 
           # Remove old android project
           rm -rf android
@@ -133,8 +120,8 @@ jobs:
             server: { androidScheme: 'https', cleartext: false },
             android: {
               buildOptions: {
-                keystorePath: '../keystore/apple-net.keystore',
-                keystoreAlias: 'apple-net',
+                keystorePath: '../keystore/apple-net-2026.keystore',
+                keystoreAlias: 'applenet',
                 keystorePassword: 'applenet2026',
                 keystoreAliasPassword: 'applenet2026',
               },
@@ -163,9 +150,9 @@ jobs:
           npx cap sync android
 
           # Copy google-services.json
-          cp "upload/google-services (17).json" android/app/google-services.json
+          cp "upload/google-services.json" android/app/google-services.json
           mkdir -p android/app/src/main/assets
-          cp "upload/google-services (17).json" android/app/src/main/assets/google-services.json
+          cp "upload/google-services.json" android/app/src/main/assets/google-services.json
 
           # Copy icons
           ICON_DIR="public/icons/android"
@@ -185,7 +172,7 @@ jobs:
           mkdir -p android/app/src/main/res/values
           echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#1B7A3D</color></resources>' > android/app/src/main/res/values/ic_launcher_background.xml
 
-          # Copy splash - only Android density variants
+          # Copy splash screens
           SPLASH_DIR="public/splash"
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             for orient in port land; do
@@ -197,9 +184,20 @@ jobs:
           mkdir -p android/app/src/main/res/drawable
           [ -f "$SPLASH_DIR/splash-xxhdpi.png" ] && cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
 
+          # ─── Apply ProGuard rules ───
+          cp scripts/proguard-rules.pro android/app/proguard-rules.pro
+
           # ─── Enable minification for smaller APK ───
           sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
           sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
+
+          # ─── Update version ───
+          sed -i "s/versionCode 1/versionCode ${{ env.VERSION_CODE }}/g" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"${{ env.VERSION_NAME }}\"/g" android/app/build.gradle
+
+          # ─── Fix signing config with new keystore ───
+          sed -i "s|apple-net.keystore|apple-net-2026.keystore|g" android/app/build.gradle
+          sed -i "s|keyAlias 'apple-net'|keyAlias 'applenet'|g" android/app/build.gradle
 
           # Build
           cd android
@@ -221,10 +219,74 @@ jobs:
             exit 1
           fi
 
+      # ──────────────────────────────────────────────────────────
+      # BUILD ADMIN APP
+      # ──────────────────────────────────────────────────────────
+      - name: 🏗️ Build Admin App - Static Export
+        if: ${{ github.event.inputs.build_type != 'user' }}
+        run: |
+          echo "📱 Building ADMIN APP static export..."
+
+          # CRITICAL: Restore admin pages (they may have been deleted by user build)
+          # Git checkout restores them
+          git checkout -- src/app/admin src/components/admin 2>/dev/null || true
+
+          # Create export config with optimizations
+          cat > next.config.build.ts << 'EXPORTCONFIG'
+          import type { NextConfig } from "next";
+          const nextConfig: NextConfig = {
+            trailingSlash: true,
+            output: "export",
+            typescript: { ignoreBuildErrors: true },
+            eslint: { ignoreDuringBuilds: true },
+            reactStrictMode: false,
+            images: { unoptimized: true },
+            experimental: {
+              optimizePackageImports: [
+                "lucide-react",
+                "date-fns",
+                "framer-motion",
+              ],
+            },
+          };
+          export default nextConfig;
+          EXPORTCONFIG
+
+          # Swap configs
+          cp next.config.ts next.config.dev.bak
+          cp next.config.build.ts next.config.ts
+
+          # Remove API routes (not needed for static export)
+          rm -rf src/app/api
+
+          # ─── ADMIN ROOT FIX ───
+          # Move admin page to root so Capacitor can load it at /
+          # The admin page.tsx becomes the root page.tsx
+          mv src/app/page.tsx src/app/page.user.bak.tsx
+          mv src/app/admin/page.tsx src/app/page.tsx
+          mv src/app/admin/layout.tsx src/app/layout.admin.bak.tsx
+
+          # Build admin app (admin page is now at root /)
+          bun run build
+
+          # ─── Copy output to out-admin ───
+          rm -rf out-admin
+          cp -r out out-admin
+
+          # Restore original files
+          cp next.config.dev.bak next.config.ts
+          rm next.config.build.ts next.config.dev.bak
+          mv src/app/page.user.bak.tsx src/app/page.tsx
+          mv src/app/layout.admin.bak.tsx src/app/admin/layout.tsx
+          # Restore admin/page.tsx from git since we moved it
+          git checkout -- src/app/admin/page.tsx 2>/dev/null || true
+
+          echo "✅ Admin app static export completed"
+
       - name: 📱 Build Admin APK
         if: ${{ github.event.inputs.build_type != 'user' }}
         run: |
-          echo "📱 Building ADMIN APP (com.applenet.admin)..."
+          echo "📱 Building ADMIN APP APK (com.applenet.admin)..."
 
           # Remove old android project
           rm -rf android
@@ -239,8 +301,8 @@ jobs:
             server: { androidScheme: 'https', cleartext: false },
             android: {
               buildOptions: {
-                keystorePath: '../keystore/apple-net.keystore',
-                keystoreAlias: 'apple-net',
+                keystorePath: '../keystore/apple-net-2026.keystore',
+                keystoreAlias: 'applenet',
                 keystorePassword: 'applenet2026',
                 keystoreAliasPassword: 'applenet2026',
               },
@@ -273,7 +335,7 @@ jobs:
           find android -name "build.gradle" -exec sed -i 's/com\.applenet\.app/com.applenet.admin/g' {} \;
           find android -name "strings.xml" -exec sed -i 's/Apple\.NET/Apple.NET Admin/g' {} \;
 
-          # Move Java files
+          # Move Java files to match admin package name
           mkdir -p android/app/src/main/java/com/applenet/admin
           if [ -f android/app/src/main/java/com/applenet/app/MainActivity.java ]; then
             sed 's/com\.applenet\.app/com.applenet.admin/g' android/app/src/main/java/com/applenet/app/MainActivity.java > android/app/src/main/java/com/applenet/admin/MainActivity.java
@@ -284,9 +346,9 @@ jobs:
           sed -i '/<application/i\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />' android/app/src/main/AndroidManifest.xml
 
           # Copy google-services.json
-          cp "upload/google-services (17).json" android/app/google-services.json
+          cp "upload/google-services.json" android/app/google-services.json
           mkdir -p android/app/src/main/assets
-          cp "upload/google-services (17).json" android/app/src/main/assets/google-services.json
+          cp "upload/google-services.json" android/app/src/main/assets/google-services.json
 
           # Copy icons
           ICON_DIR="public/icons/android"
@@ -306,7 +368,7 @@ jobs:
           mkdir -p android/app/src/main/res/values
           echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#10b981</color></resources>' > android/app/src/main/res/values/ic_launcher_background.xml
 
-          # Copy splash - only Android density variants
+          # Copy splash screens
           SPLASH_DIR="public/splash"
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             for orient in port land; do
@@ -318,9 +380,20 @@ jobs:
           mkdir -p android/app/src/main/res/drawable
           [ -f "$SPLASH_DIR/splash-xxhdpi.png" ] && cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
 
+          # ─── Apply ProGuard rules ───
+          cp scripts/proguard-rules.pro android/app/proguard-rules.pro
+
           # ─── Enable minification for smaller APK ───
           sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
           sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
+
+          # ─── Update version ───
+          sed -i "s/versionCode 1/versionCode ${{ env.VERSION_CODE }}/g" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"${{ env.VERSION_NAME }}\"/g" android/app/build.gradle
+
+          # ─── Fix signing config with new keystore ───
+          sed -i "s|apple-net.keystore|apple-net-2026.keystore|g" android/app/build.gradle
+          sed -i "s|keyAlias 'apple-net'|keyAlias 'applenet'|g" android/app/build.gradle
 
           # Build
           cd android

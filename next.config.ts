@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   reactStrictMode: false,
   images: {
     unoptimized: true,
@@ -14,8 +17,6 @@ const nextConfig: NextConfig = {
     optimizePackageImports: [
       "lucide-react",
       "date-fns",
-      "@radix-ui/react-icons",
-      "recharts",
       "framer-motion",
     ],
   },

@@ -10,8 +10,8 @@ const config: CapacitorConfig = {
   },
   android: {
     buildOptions: {
-      keystorePath: '../keystore/apple-net.keystore',
-      keystoreAlias: 'apple-net',
+      keystorePath: '../keystore/apple-net-2026.keystore',
+      keystoreAlias: 'applenet',
       keystorePassword: 'applenet2026',
       keystoreAliasPassword: 'applenet2026',
     },
@@ -42,6 +42,9 @@ const config: CapacitorConfig = {
       showSpinner: false,
       splashFullScreen: true,
       splashImmersive: true,
+    },
+    BiometricAuth: {
+      iosKeychainAccessGroup: 'com.applenet.app',
     },
   },
 };
