@@ -115,6 +115,9 @@ jobs:
         run: |
           # Replace generated build.gradle with our custom one that has signing + Firebase
           sed 's/APP_NAMESPACE/com.applenet.app/g; s/APP_PACKAGE/com.applenet.app/g' scripts/android-app-build.gradle > android/app/build.gradle
+          # Copy keystore into android directory for signing
+          mkdir -p android/keystore
+          cp keystore/apple-net.keystore android/keystore/apple-net.keystore
 
       - name: Copy google-services.json
         run: |
@@ -309,6 +312,9 @@ jobs:
       - name: Apply custom build.gradle with signing + admin package
         run: |
           sed 's/APP_NAMESPACE/com.applenet.admin/g; s/APP_PACKAGE/com.applenet.admin/g' scripts/android-app-build.gradle > android/app/build.gradle
+          # Copy keystore into android directory for signing
+          mkdir -p android/keystore
+          cp keystore/apple-net.keystore android/keystore/apple-net.keystore
 
       - name: Set admin package name in other files
         run: |
