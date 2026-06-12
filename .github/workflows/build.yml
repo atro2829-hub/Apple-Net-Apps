@@ -118,9 +118,11 @@ jobs:
 
       - name: Copy google-services.json
         run: |
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+          echo '${{ secrets.GOOGLE_SERVICES_JSON_B64 }}' | base64 -d > android/app/google-services.json
           mkdir -p android/app/src/main/assets
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/src/main/assets/google-services.json
+          echo '${{ secrets.GOOGLE_SERVICES_JSON_B64 }}' | base64 -d > android/app/src/main/assets/google-services.json
+          # Verify the JSON is valid
+          python3 -c "import json; json.load(open('android/app/google-services.json'))" || exit 1
 
       - name: Apply custom app icons
         run: |
@@ -320,9 +322,11 @@ jobs:
 
       - name: Copy google-services.json
         run: |
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+          echo '${{ secrets.GOOGLE_SERVICES_JSON_B64 }}' | base64 -d > android/app/google-services.json
           mkdir -p android/app/src/main/assets
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/src/main/assets/google-services.json
+          echo '${{ secrets.GOOGLE_SERVICES_JSON_B64 }}' | base64 -d > android/app/src/main/assets/google-services.json
+          # Verify the JSON is valid
+          python3 -c "import json; json.load(open('android/app/google-services.json'))" || exit 1
 
       - name: Apply custom app icons
         run: |
