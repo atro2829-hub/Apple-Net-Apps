@@ -1,0 +1,735 @@
+     1→"use client";
+     2→
+     3→import React, { useState, useEffect, useCallback } from "react";
+     4→import { motion, AnimatePresence } from "framer-motion";
+     5→import {
+     6→  Home,
+     7→  Wifi,
+     8→  CreditCard,
+     9→  MoreHorizontal,
+    10→  Settings,
+    11→  LogIn,
+    12→  LogOut,
+    13→  X,
+    14→  ShoppingBag,
+    15→  Shield,
+    16→  Menu,
+    17→  Wallet,
+    18→  Crown,
+    19→  Satellite,
+    20→  User,
+    21→  Globe,
+    22→  Building2,
+    23→  MapPin,
+    24→  MessageCircle,
+    25→  MessageSquareWarning,
+    26→} from "lucide-react";
+    27→import {
+    28→  auth,
+    29→  db,
+    30→} from "@/lib/firebase";
+    31→import {
+    32→  signOut,
+    33→  onAuthStateChanged,
+    34→  type User as FirebaseUser,
+    35→} from "firebase/auth";
+    36→import { ref, get, onValue, update } from "firebase/database";
+    37→import { Button } from "@/components/ui/button";
+    38→import { toast } from "sonner";
+    39→import { PROVINCES, getDistricts, getDistrictsEn } from "@/lib/constants";
+    40→
+    41→import { AppleNetLogo } from "@/components/AppleNetLogo";
+    42→import { AuthForm } from "@/components/AuthForm";
+    43→import { HomePage } from "@/components/HomePage";
+    44→import { CardsPage } from "@/components/CardsPage";
+    45→import { PurchasedPage } from "@/components/PurchasedPage";
+    46→import { CreditPage } from "@/components/CreditPage";
+    47→import { DepositPage } from "@/components/DepositPage";
+    48→import { TelecomRechargePage } from "@/components/TelecomRechargePage";
+    49→import { BanksPage } from "@/components/BanksPage";
+    50→import { SimsPage } from "@/components/SimsPage";
+    51→import { AdsPage } from "@/components/AdsPage";
+    52→import { MorePage } from "@/components/MorePage";
+    53→import { AdminPanel } from "@/components/AdminPanel";
+    54→import { NetworkManagerPanel } from "@/components/NetworkManagerPanel";
+    55→import { NotificationCenter } from "@/components/NotificationCenter";
+    56→import { StarlinkPage } from "@/components/StarlinkPage";
+    57→import { NetworkSubmissionPage } from "@/components/NetworkSubmissionPage";
+    58→import { OnboardingFlow } from "@/components/OnboardingFlow";
+    59→import { AppUpdateBanner } from "@/components/AppUpdateBanner";
+    60→import { iOSInstallBanner as IOSInstallBanner } from "@/components/iOSInstallBanner";
+    61→import { ProfilePage } from "@/components/ProfilePage";
+    62→import { ChatPage } from "@/components/ChatPage";
+    63→import { ComplaintPage } from "@/components/ComplaintPage";
+    64→import { ThemeToggle } from "@/components/ThemeToggle";
+    65→import { LanguageToggle } from "@/components/LanguageToggle";
+    66→import { PermissionModal } from "@/components/PermissionModal";
+    67→import { PinLockScreen } from "@/components/PinLockScreen";
+    68→import { iOSSpring } from "@/lib/constants";
+    69→import { initNotifications, initFCMToken } from "@/lib/notifications";
+    70→import { useLanguage } from "@/context/LanguageContext";
+    71→
+    72→const APP_VERSION = "2.1.0";
+    73→
+    74→export default function AppleNetApp() {
+    75→  const { t, isRTL, lang } = useLanguage();
+    76→
+    77→  const NAV_TABS = [
+    78→    { id: "home", icon: Home, label: t("nav.home") },
+    79→    { id: "cards", icon: Wifi, label: t("nav.cards") },
+    80→    { id: "starlink", icon: Satellite, label: "Starlink" },
+    81→    { id: "chat", icon: MessageCircle, label: t("nav.chat") },
+    82→    { id: "credit", icon: Wallet, label: t("nav.credit") },
+    83→  ];
+    84→
+    85→  const [user, setUser] = useState<FirebaseUser | null>(null);
+    86→  const [isAdmin, setIsAdmin] = useState(false);
+    87→  const [userRole, setUserRole] = useState<string>("user");
+    88→  const [managedNetwork, setManagedNetwork] = useState<string>("");
+    89→  const [activeTab, setActiveTab] = useState("home");
+    90→  const [showAuth, setShowAuth] = useState(false);
+    91→  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+    92→  const [showAdmin, setShowAdmin] = useState(false);
+    93→  const [loading, setLoading] = useState(true);
+    94→  const [showMenu, setShowMenu] = useState(false);
+    95→  const [splashDone, setSplashDone] = useState(false);
+    96→  const [splashExiting, setSplashExiting] = useState(false);
+    97→  const [userName, setUserName] = useState<string>("");
+    98→  const [showOnboarding, setShowOnboarding] = useState(false);
+    99→  const [splashProgress, setSplashProgress] = useState(0);
+   100→  const [showLocationModal, setShowLocationModal] = useState(false);
+   101→  const [locationModalProvinceId, setLocationModalProvinceId] = useState("");
+   102→  const [locationModalDistrict, setLocationModalDistrict] = useState("");
+   103→  const [locationModalSaving, setLocationModalSaving] = useState(false);
+   104→  const [locationModalDismissed, setLocationModalDismissed] = useState(false);
+   105→  const [userPhotoURL, setUserPhotoURL] = useState<string>("");
+   106→  const [pinLocked, setPinLocked] = useState(false);
+   107→  const [biometricEnabled, setBiometricEnabled] = useState(false);
+   108→  const [pinEnabled, setPinEnabled] = useState(false);
+   109→
+   110→  // Listen for PIN/biometric setting changes
+   111→  useEffect(() => {
+   112→    if (!user) return;
+   113→    const pinUnsub = onValue(ref(db, `users/${user.uid}/pinEnabled`), (snap) => {
+   114→      setPinEnabled(!!snap.val());
+   115→    });
+   116→    const bioUnsub = onValue(ref(db, `users/${user.uid}/biometricEnabled`), (snap) => {
+   117→      setBiometricEnabled(!!snap.val());
+   118→    });
+   119→    return () => { pinUnsub(); bioUnsub(); };
+   120→  }, [user]);
+   121→
+   122→  // Handle URL params for PWA shortcuts
+   123→  useEffect(() => {
+   124→    if (typeof window === "undefined") return;
+   125→    const params = new URLSearchParams(window.location.search);
+   126→    const tab = params.get("tab");
+   127→    if (tab && (NAV_TABS.some(t => t.id === tab) || tab === "profile" || tab === "deposit" || tab === "purchased" || tab === "submit-network")) {
+   128→      setActiveTab(tab);
+   129→    }
+   130→  }, []);
+   131→
+   132→  useEffect(() => {
+   133→    const unsub = onAuthStateChanged(auth, async (u) => {
+   134→      setUser(u);
+   135→      if (u) {
+   136→        try {
+   137→          const roleSnap = await get(ref(db, `users/${u.uid}/role`));
+   138→          const role = roleSnap.val() || "user";
+   139→          setUserRole(role);
+   140→          setIsAdmin(role === "admin");
+   141→          const nameSnap = await get(ref(db, `users/${u.uid}/displayName`));
+   142→          setUserName(nameSnap.val() || u.displayName || u.email?.split("@")[0] || "م");
+   143→          // Check if user has provinceId, show location modal if not
+   144→          const provinceSnap = await get(ref(db, `users/${u.uid}/provinceId`));
+   145→          const hasProvince = provinceSnap.exists() && provinceSnap.val();
+   146→          if (!hasProvince && !locationModalDismissed) {
+   147→            setShowLocationModal(true);
+   148→          }
+   149→          if (role === "network_manager") {
+   150→            const netSnap = await get(ref(db, `users/${u.uid}/managedNetwork`));
+   151→            setManagedNetwork(netSnap.val() || "");
+   152→          }
+   153→          // Check PIN and biometric settings
+   154→          const pinSnap = await get(ref(db, `users/${u.uid}/pinEnabled`));
+   155→          const bioSnap = await get(ref(db, `users/${u.uid}/biometricEnabled`));
+   156→          const isPinEnabled = !!pinSnap.val();
+   157→          const isBioEnabled = !!bioSnap.val();
+   158→          setPinEnabled(isPinEnabled);
+   159→          setBiometricEnabled(isBioEnabled);
+   160→          if (isPinEnabled) setPinLocked(true);
+   161→          // Initialize FCM
+   162→          initFCMToken(u.uid).catch(() => {});
+   163→        } catch {
+   164→          setIsAdmin(false);
+   165→          setUserRole("user");
+   166→        }
+   167→      } else {
+   168→        setIsAdmin(false);
+   169→        setUserRole("user");
+   170→        setManagedNetwork("");
+   171→        setUserName("");
+   172→      }
+   173→      setLoading(false);
+   174→    });
+   175→    return () => unsub();
+   176→  }, []);
+   177→
+   178→  useEffect(() => {
+   179→    if (!user) return;
+   180→    const roleUnsub = onValue(ref(db, `users/${user.uid}/role`), (snap) => {
+   181→      const role = snap.val() || "user";
+   182→      setUserRole(role);
+   183→      setIsAdmin(role === "admin");
+   184→      if (role === "network_manager") {
+   185→        get(ref(db, `users/${user.uid}/managedNetwork`)).then((netSnap) => {
+   186→          setManagedNetwork(netSnap.val() || "");
+   187→        });
+   188→      } else {
+   189→        setManagedNetwork("");
+   190→      }
+   191→    });
+   192→    const nameUnsub = onValue(ref(db, `users/${user.uid}/displayName`), (snap) => {
+   193→      if (snap.val()) setUserName(snap.val());
+   194→    });
+   195→    return () => { roleUnsub(); nameUnsub(); };
+   196→  }, [user]);
+   197→
+   198→  // Listen for user photo URL
+   199→  useEffect(() => {
+   200→    if (!user) return;
+   201→    const photoUnsub = onValue(ref(db, `users/${user.uid}/photoURL`), (snap) => {
+   202→      if (snap.val()) setUserPhotoURL(snap.val());
+   203→      else setUserPhotoURL("");
+   204→    });
+   205→    return () => photoUnsub();
+   206→  }, [user]);
+   207→
+   208→  // Enhanced splash screen with progress bar animation
+   209→  useEffect(() => {
+   210→    // Animate progress bar
+   211→    const progressInterval = setInterval(() => {
+   212→      setSplashProgress((prev) => {
+   213→        if (prev >= 100) {
+   214→          clearInterval(progressInterval);
+   215→          return 100;
+   216→        }
+   217→        // Non-linear progress: fast at start, slows down, then completes
+   218→        const increment = prev < 30 ? 8 : prev < 60 ? 5 : prev < 85 ? 3 : 1;
+   219→        return Math.min(prev + increment, 100);
+   220→      });
+   221→    }, 100);
+   222→
+   223→    // Initialize notifications during splash
+   224→    initNotifications();
+   225→
+   226→    // Start splash exit after delay
+   227→    const exitTimer = setTimeout(() => {
+   228→      setSplashExiting(true);
+   229→    }, 2000);
+   230→
+   231→    const doneTimer = setTimeout(() => {
+   232→      setSplashDone(true);
+   233→      // Check if onboarding should show
+   234→      if (typeof window !== "undefined" && !localStorage.getItem("applenet_onboarding_done")) {
+   235→        setShowOnboarding(true);
+   236→      }
+   237→    }, 2500);
+   238→
+   239→    return () => {
+   240→      clearInterval(progressInterval);
+   241→      clearTimeout(exitTimer);
+   242→      clearTimeout(doneTimer);
+   243→    };
+   244→  }, []);
+   245→
+   246→  const handleOnboardingComplete = useCallback(() => {
+   247→    setShowOnboarding(false);
+   248→  }, []);
+   249→
+   250→  // Enhanced Splash Screen with progress bar, version, and shimmer
+   251→  if (!splashDone) {
+   252→    return (
+   253→      <motion.div
+   254→        initial={{ opacity: 1 }}
+   255→        animate={{ opacity: splashExiting ? 0 : 1 }}
+   256→        transition={{ duration: 0.5, ease: "easeInOut" }}
+   257→        className="fixed inset-0 bg-white dark:bg-slate-900 flex flex-col items-center justify-center"
+   258→        dir={isRTL ? "rtl" : "ltr"}
+   259→      >
+   260→        <motion.div
+   261→          initial={{ scale: 0.5, opacity: 0 }}
+   262→          animate={{ scale: 1, opacity: 1 }}
+   263→          transition={{ type: "spring", stiffness: 200, damping: 15 }}
+   264→          className="flex flex-col items-center"
+   265→        >
+   266→          {/* App Icon with shimmer */}
+   267→          <div className="relative w-24 h-24 rounded-3xl overflow-hidden shadow-xl mb-6 border-2 border-[#E8F5E9] splash-shimmer">
+   268→            <img src="/images/IMG_20260527_220851.jpg" alt="Apple.NET" className="w-full h-full object-cover" />
+   269→          </div>
+   270→          <AppleNetLogo size="lg" />
+   271→
+   272→          {/* Loading indicator */}
+   273→          <motion.div
+   274→            initial={{ opacity: 0 }}
+   275→            animate={{ opacity: 1 }}
+   276→            transition={{ delay: 0.5 }}
+   277→            className="mt-6 flex items-center gap-2"
+   278→          >
+   279→            <div className="w-5 h-5 border-2 border-[#1B7A3D]/30 border-t-[#1B7A3D] rounded-full animate-spin" />
+   280→            <span className="text-sm text-gray-400 dark:text-slate-500 font-bold">{t("splash.loading")}</span>
+   281→          </motion.div>
+   282→        </motion.div>
+   283→
+   284→        {/* Progress bar */}
+   285→        <div className="absolute bottom-16 left-8 right-8 max-w-xs mx-auto">
+   286→          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+   287→            <motion.div
+   288→              initial={{ width: "0%" }}
+   289→              animate={{ width: `${splashProgress}%` }}
+   290→              transition={{ duration: 0.3, ease: "easeOut" }}
+   291→              className="h-full bg-gradient-to-l from-[#1B7A3D] to-[#22A24D] rounded-full"
+   292→            />
+   293→          </div>
+   294→        </div>
+   295→
+   296→        {/* Version display */}
+   297→        <div className="absolute bottom-8 text-center">
+   298→          <span className="text-[10px] text-gray-300 font-mono">v{APP_VERSION}</span>
+   299→        </div>
+   300→      </motion.div>
+   301→    );
+   302→  }
+   303→
+   304→  // Onboarding Flow
+   305→  if (showOnboarding) {
+   306→    return (
+   307→      <OnboardingFlow
+   308→        onComplete={handleOnboardingComplete}
+   309→        onLoginClick={() => { setShowOnboarding(false); setAuthMode("login"); setShowAuth(true); }}
+   310→        onRegisterClick={() => { setShowOnboarding(false); setAuthMode("register"); setShowAuth(true); }}
+   311→      />
+   312→    );
+   313→  }
+   314→
+   315→  // PIN Lock Screen
+   316→  if (pinLocked && user && pinEnabled) {
+   317→    return (
+   318→      <AnimatePresence>
+   319→        <PinLockScreen
+   320→          user={user}
+   321→          onUnlock={() => setPinLocked(false)}
+   322→          biometricEnabled={biometricEnabled}
+   323→        />
+   324→      </AnimatePresence>
+   325→    );
+   326→  }
+   327→
+   328→  return (
+   329→    <div id="app-shell" className="font-sans bg-gray-50 dark:bg-slate-900" dir={isRTL ? "rtl" : "ltr"}>
+   330→
+   331→      {/* ===== App Update Banner ===== */}
+   332→      <AppUpdateBanner />
+   333→      <IOSInstallBanner />
+   334→
+   335→      {/* ===== STATUS BAR SIMULATION ===== */}
+   336→      <div className="bg-white h-1 flex-shrink-0" />
+   337→
+   338→      {/* ===== LOCATION MODAL ===== */}
+   339→      <AnimatePresence>
+   340→        {showLocationModal && user && !locationModalDismissed && (
+   341→          <motion.div
+   342→            key="location-modal-overlay"
+   343→            initial={{ opacity: 0 }}
+   344→            animate={{ opacity: 1 }}
+   345→            exit={{ opacity: 0 }}
+   346→            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+   347→            dir="rtl"
+   348→          >
+   349→            <motion.div
+   350→              key="location-modal-card"
+   351→              initial={{ scale: 0.85, opacity: 0, y: 30 }}
+   352→              animate={{ scale: 1, opacity: 1, y: 0 }}
+   353→              exit={{ scale: 0.85, opacity: 0, y: 30 }}
+   354→              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+   355→              className="w-full max-w-sm bg-white rounded-3xl overflow-hidden shadow-2xl"
+   356→            >
+   357→              {/* Green Header */}
+   358→              <div className="bg-gradient-to-l from-[#1B7A3D] to-[#22A24D] p-5 text-center relative overflow-hidden">
+   359→                <div className="absolute top-0 left-0 w-24 h-24 bg-white/5 rounded-full -translate-x-1/2 -translate-y-1/2" />
+   360→                <div className="absolute bottom-0 right-0 w-16 h-16 bg-white/5 rounded-full translate-x-1/3 translate-y-1/3" />
+   361→                <div className="relative z-10">
+   362→                  <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center mx-auto mb-3">
+   363→                    <MapPin className="w-7 h-7 text-white" />
+   364→                  </div>
+   365→                  <h2 className="text-xl font-black text-white mb-1">{t("location.title")}</h2>
+   366→                  <p className="text-white/70 text-xs leading-relaxed">{t("location.subtitle")}</p>
+   367→                </div>
+   368→              </div>
+   369→
+   370→              {/* Form */}
+   371→              <div className="p-5 space-y-4">
+   372→                {/* Province */}
+   373→                <div>
+   374→                  <label className="block text-xs text-gray-500 mb-1.5 font-bold">{t("location.province")}</label>
+   375→                  <div className="relative">
+   376→                    <Globe className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+   377→                    <select
+   378→                      value={locationModalProvinceId}
+   379→                      onChange={(e) => { setLocationModalProvinceId(e.target.value); setLocationModalDistrict(""); }}
+   380→                      className="w-full bg-gray-50 border border-gray-200 text-gray-900 rounded-xl h-12 text-sm pr-10 pl-4 focus:border-[#1B7A3D] focus:ring-[#1B7A3D] appearance-none"
+   381→                    >
+   382→                      <option value="">{t("location.selectProvince")}</option>
+   383→                      {PROVINCES.map(p => (
+   384→                        <option key={p.id} value={p.id}>{lang === "en" && p.nameEn ? p.nameEn : p.name}</option>
+   385→                      ))}
+   386→                    </select>
+   387→                  </div>
+   388→                </div>
+   389→
+   390→                {/* District */}
+   391→                <div>
+   392→                  <label className="block text-xs text-gray-500 mb-1.5 font-bold">{t("location.district")}</label>
+   393→                  <div className="relative">
+   394→                    <Building2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+   395→                    <select
+   396→                      value={locationModalDistrict}
+   397→                      onChange={(e) => setLocationModalDistrict(e.target.value)}
+   398→                      disabled={!locationModalProvinceId}
+   399→                      className="w-full bg-gray-50 border border-gray-200 text-gray-900 rounded-xl h-12 text-sm pr-10 pl-4 focus:border-[#1B7A3D] focus:ring-[#1B7A3D] appearance-none disabled:opacity-50 disabled:cursor-not-allowed"
+   400→                    >
+   401→                      <option value="">{locationModalProvinceId ? t("location.selectDistrict") : t("location.selectProvinceFirst")}</option>
+   402→                      {locationModalProvinceId && (() => {
+   403→                        const districtNames = lang === "en" ? getDistrictsEn(locationModalProvinceId) : getDistricts(locationModalProvinceId);
+   404→                        const districtValues = getDistricts(locationModalProvinceId);
+   405→                        return districtValues.map((d, i) => (
+   406→                          <option key={d} value={d}>{districtNames[i]}</option>
+   407→                        ));
+   408→                      })()}
+   409→                    </select>
+   410→                  </div>
+   411→                </div>
+   412→
+   413→                {/* Buttons */}
+   414→                <div className="space-y-2 pt-1">
+   415→                  <Button
+   416→                    onClick={async () => {
+   417→                      if (!locationModalProvinceId) {
+   418→                        toast.error(t("location.selectProvinceFirst"));
+   419→                        return;
+   420→                      }
+   421→                      setLocationModalSaving(true);
+   422→                      try {
+   423→                        const provinceObj = PROVINCES.find(p => p.id === locationModalProvinceId);
+   424→                        await update(ref(db, `users/${user.uid}`), {
+   425→                          provinceId: locationModalProvinceId,
+   426→                          provinceName: provinceObj?.name || null,
+   427→                          district: locationModalDistrict || null,
+   428→                        });
+   429→                        toast.success(t("location.savedSuccess"));
+   430→                        setShowLocationModal(false);
+   431→                        setLocationModalDismissed(true);
+   432→                      } catch {
+   433→                        toast.error(t("location.saveError"));
+   434→                      }
+   435→                      setLocationModalSaving(false);
+   436→                    }}
+   437→                    disabled={locationModalSaving}
+   438→                    className="w-full bg-gradient-to-l from-[#1B7A3D] to-[#22A24D] hover:from-[#165E30] hover:to-[#134D28] text-white font-bold rounded-2xl h-12 btn-green-shadow disabled:opacity-70"
+   439→                  >
+   440→                    {locationModalSaving ? (
+   441→                      <span className="flex items-center gap-2">
+   442→                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+   443→                        {t("location.saving")}
+   444→                      </span>
+   445→                    ) : t("location.save")}
+   446→                  </Button>
+   447→                  <Button
+   448→                    variant="ghost"
+   449→                    onClick={() => {
+   450→                      setShowLocationModal(false);
+   451→                      setLocationModalDismissed(true);
+   452→                    }}
+   453→                    className="w-full text-gray-400 font-bold rounded-xl h-10 text-sm hover:text-gray-600"
+   454→                  >
+   455→                    {t("location.skip")}
+   456→                  </Button>
+   457→                </div>
+   458→              </div>
+   459→            </motion.div>
+   460→          </motion.div>
+   461→        )}
+   462→      </AnimatePresence>
+   463→
+   464→      {/* ===== APP HEADER ===== */}
+   465→      <header className="flex-shrink-0 app-header border-b border-gray-100/50 z-40">
+   466→        <div className="max-w-lg mx-auto px-4 py-2.5 flex items-center justify-between">
+   467→          {/* Menu Button */}
+   468→          <motion.button
+   469→            whileTap={{ scale: 0.85 }}
+   470→            onClick={() => setShowMenu(!showMenu)}
+   471→            className="w-10 h-10 rounded-2xl bg-[#E8F5E9] flex items-center justify-center hover:bg-green-100 transition-colors haptic-press"
+   472→          >
+   473→            <Menu className="w-5 h-5 text-[#1B7A3D]" />
+   474→          </motion.button>
+   475→
+   476→          {/* App Logo */}
+   477→          <AppleNetLogo size="sm" />
+   478→
+   479→          {/* Right Actions */}
+   480→          <div className="flex items-center gap-1">
+   481→            <ThemeToggle />
+   482→            <LanguageToggle />
+   483→            {user && <NotificationCenter uid={user.uid} isAdmin={isAdmin} />}
+   484→            {user ? (
+   485→              <motion.button
+   486→                whileTap={{ scale: 0.85 }}
+   487→                onClick={async () => { await signOut(auth); toast.success(t("auth.logout")); }}
+   488→                className="w-10 h-10 rounded-2xl bg-red-50 dark:bg-red-900/20 flex items-center justify-center hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors haptic-press"
+   489→              >
+   490→                <LogOut className="w-4 h-4 text-red-500" />
+   491→              </motion.button>
+   492→            ) : (
+   493→              <motion.button
+   494→                whileTap={{ scale: 0.85 }}
+   495→                onClick={() => setShowAuth(true)}
+   496→                className="w-10 h-10 rounded-2xl bg-[#E8F5E9] dark:bg-green-900/30 flex items-center justify-center hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors haptic-press"
+   497→              >
+   498→                <LogIn className="w-4 h-4 text-[#1B7A3D]" />
+   499→              </motion.button>
+   500→            )}
+   501→          </div>
+   502→        </div>
+   503→      </header>
+   504→
+   505→      {/* ===== SIDE MENU (Drawer) ===== */}
+   506→      <AnimatePresence>
+   507→        {showMenu && (
+   508→          <>
+   509→            <motion.div
+   510→              initial={{ opacity: 0 }}
+   511→              animate={{ opacity: 1 }}
+   512→              exit={{ opacity: 0 }}
+   513→              className="fixed inset-0 bg-black/40 z-[100]"
+   514→              onClick={() => setShowMenu(false)}
+   515→            />
+   516→            <motion.div
+   517→              initial={{ x: 288, opacity: 0 }}
+   518→              animate={{ x: 0, opacity: 1 }}
+   519→              exit={{ x: 288, opacity: 0 }}
+   520→              transition={iOSSpring.gentle}
+   521→              className="fixed top-0 right-0 bottom-0 w-[288px] bg-white dark:bg-slate-900 z-[101] shadow-2xl border-l border-gray-100 dark:border-slate-700/50"
+   522→            >
+   523→              <div className="p-5">
+   524→                {/* Menu Header */}
+   525→                <div className="flex items-center justify-between mb-5">
+   526→                  <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-[#E8F5E9] dark:border-green-900/30">
+   527→                    <img src="/images/IMG_20260527_220851.jpg" alt="Apple.NET" className="w-full h-full object-cover" />
+   528→                  </div>
+   529→                  <button onClick={() => setShowMenu(false)} className="w-8 h-8 rounded-full bg-gray-100 dark:bg-slate-700 flex items-center justify-center">
+   530→                    <X className="w-4 h-4 text-gray-400 dark:text-slate-400" />
+   531→                  </button>
+   532→                </div>
+   533→
+   534→                {/* User Card */}
+   535→                {user && (
+   536→                  <div className="bg-gradient-to-bl from-[#E8F5E9] dark:from-green-900/20 to-[#F0FFF4] dark:to-green-900/10 rounded-2xl p-4 mb-4 border border-[#1B7A3D]/10 dark:border-green-900/20">
+   537→                    <div className="flex items-center gap-3">
+   538→                      {userPhotoURL ? (
+   539→                        <img
+   540→                          src={userPhotoURL}
+   541→                          alt={userName || "User"}
+   542→                          className="w-11 h-11 rounded-full object-cover shadow-sm"
+   543→                        />
+   544→                      ) : (
+   545→                        <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#1B7A3D] to-[#22A24D] flex items-center justify-center shadow-sm">
+   546→                          <span className="text-white font-black text-base">{(userName || "م")[0].toUpperCase()}</span>
+   547→                        </div>
+   548→                      )}
+   549→                      <div className="flex-1 min-w-0">
+   550→                        <p className="text-sm font-bold text-gray-900 dark:text-white truncate">{userName || t("profile.user")}</p>
+   551→                        <p className="text-[10px] text-gray-400 dark:text-slate-500 truncate" dir="ltr">{user.email}</p>
+   552→                      </div>
+   553→                    </div>
+   554→                    {isAdmin && <span className="inline-block mt-2 bg-[#1B7A3D] text-white text-[9px] font-bold px-2 py-0.5 rounded-full">{t("common.admin")}</span>}
+   555→                    {userRole === "network_manager" && <span className="inline-block mt-2 bg-orange-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full">{t("common.networkManager")}</span>}
+   556→                  </div>
+   557→                )}
+   558→
+   559→                {/* Not logged in prompt */}
+   560→                {!user && (
+   561→                  <div className="bg-gray-50 dark:bg-slate-800 rounded-2xl p-4 mb-4 text-center">
+   562→                    <p className="text-sm text-gray-500 dark:text-slate-400 mb-3">{t("auth.loginPrompt")}</p>
+   563→                    <Button
+   564→                      onClick={() => { setShowMenu(false); setShowAuth(true); }}
+   565→                      className="w-full bg-gradient-to-l from-[#1B7A3D] to-[#22A24D] text-white font-bold rounded-xl h-10 text-sm btn-green-shadow"
+   566→                    >
+   567→                      <LogIn className="w-4 h-4 ml-1.5" />{t("auth.login")}
+   568→                    </Button>
+   569→                  </div>
+   570→                )}
+   571→
+   572→                {/* Navigation */}
+   573→                <nav className="space-y-0.5">
+   574→                  {[
+   575→                    { icon: Home, label: t("menu.home"), tab: "home", action: () => { setActiveTab("home"); setShowMenu(false); } },
+   576→                    { icon: Wifi, label: t("menu.buyCards"), tab: "cards", action: () => { setActiveTab("cards"); setShowMenu(false); } },
+   577→                    { icon: Globe, label: t("menu.submitNetwork"), tab: "submit-network", action: () => { setActiveTab("submit-network"); setShowMenu(false); } },
+   578→                    { icon: Satellite, label: t("menu.starlink"), tab: "starlink", action: () => { setActiveTab("starlink"); setShowMenu(false); } },
+   579→                    { icon: Wallet, label: t("menu.deposit"), tab: "deposit", action: () => { setActiveTab("deposit"); setShowMenu(false); } },
+   580→                    { icon: CreditCard, label: t("menu.myBalance"), tab: "credit", action: () => { setActiveTab("credit"); setShowMenu(false); } },
+   581→                    { icon: ShoppingBag, label: t("menu.myPurchases"), tab: "purchased", action: () => { setActiveTab("purchased"); setShowMenu(false); } },
+   582→                    ...(user ? [{ icon: User, label: t("menu.profile"), tab: "profile", action: () => { setActiveTab("profile"); setShowMenu(false); } }] : []),
+   583→                    { icon: MessageSquareWarning, label: t("menu.complaints"), tab: "complaints", action: () => { setActiveTab("complaints"); setShowMenu(false); } },
+   584→                    { icon: MoreHorizontal, label: t("menu.more"), tab: "more", action: () => { setActiveTab("more"); setShowMenu(false); } },
+   585→                    ...(isAdmin || userRole === "network_manager" ? [{ icon: Settings, label: t("menu.dashboard"), tab: "admin", action: () => { setShowAdmin(true); setShowMenu(false); } }] : []),
+   586→                  ].map((item, i) => (
+   587→                    <motion.button
+   588→                      key={i}
+   589→                      whileTap={{ scale: 0.97 }}
+   590→                      onClick={item.action}
+   591→                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors haptic-press ${
+   592→                        activeTab === item.tab
+   593→                          ? "bg-[#E8F5E9] dark:bg-green-900/25 text-[#1B7A3D]"
+   594→                          : "text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800"
+   595→                      }`}
+   596→                    >
+   597→                      <item.icon className="w-5 h-5 flex-shrink-0" />
+   598→                      <span className="text-sm font-semibold">{item.label}</span>
+   599→                    </motion.button>
+   600→                  ))}
+   601→                </nav>
+   602→              </div>
+   603→
+   604→              {/* Menu Footer */}
+   605→              <div className="absolute bottom-6 right-5 left-5">
+   606→                <div className="flex items-center justify-between">
+   607→                  <div className="flex items-center gap-2 opacity-40">
+   608→                    <AppleNetLogo size="sm" />
+   609→                    <span className="text-[10px] text-gray-400 dark:text-slate-500">v{APP_VERSION}</span>
+   610→                  </div>
+   611→                  <div className="flex items-center gap-1.5">
+   612→                    <ThemeToggle />
+   613→                    <LanguageToggle />
+   614→                  </div>
+   615→                </div>
+   616→              </div>
+   617→            </motion.div>
+   618→          </>
+   619→        )}
+   620→      </AnimatePresence>
+   621→
+   622→      {/* ===== MAIN CONTENT (scrollable) ===== */}
+   623→      <div id="app-content" className="pb-24 overflow-hidden">
+   624→        <AnimatePresence mode="wait">
+   625→          {activeTab === "home" && <motion.div key="page-home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><HomePage user={user} isAdmin={isAdmin} onAuthClick={() => setShowAuth(true)} onNavigate={setActiveTab} /></motion.div>}
+   626→          {activeTab === "cards" && <motion.div key="page-cards" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><CardsPage user={user} onAuthClick={() => setShowAuth(true)} /></motion.div>}
+   627→          {activeTab === "starlink" && <motion.div key="page-starlink" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><StarlinkPage user={user} onAuthClick={() => setShowAuth(true)} /></motion.div>}
+   628→          {activeTab === "deposit" && <motion.div key="page-deposit" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><DepositPage user={user} onAuthClick={() => setShowAuth(true)} /></motion.div>}
+   629→          {activeTab === "credit" && <motion.div key="page-credit" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><CreditPage user={user} onAuthClick={() => setShowAuth(true)} onNavigate={setActiveTab} /></motion.div>}
+   630→          {activeTab === "purchased" && <motion.div key="page-purchased" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><PurchasedPage user={user} onAuthClick={() => setShowAuth(true)} /></motion.div>}
+   631→          {activeTab === "banks" && <motion.div key="page-banks" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><BanksPage /></motion.div>}
+   632→          {activeTab === "telecom" && <motion.div key="page-telecom" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><TelecomRechargePage user={user} onAuthClick={() => setShowAuth(true)} /></motion.div>}
+   633→          {activeTab === "sims" && <motion.div key="page-sims" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><SimsPage /></motion.div>}
+   634→          {activeTab === "ads" && <motion.div key="page-ads" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><AdsPage /></motion.div>}
+   635→          {activeTab === "more" && <motion.div key="page-more" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><MorePage user={user} isAdmin={isAdmin} onAuthClick={() => setShowAuth(true)} onNavigate={setActiveTab} /></motion.div>}
+   636→          {activeTab === "submit-network" && <motion.div key="page-submit-network" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><NetworkSubmissionPage user={user} onAuthClick={() => setShowAuth(true)} /></motion.div>}
+   637→          {activeTab === "profile" && <motion.div key="page-profile" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><ProfilePage user={user} onBack={() => setActiveTab("more")} /></motion.div>}
+   638→          {activeTab === "chat" && <motion.div key="page-chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><ChatPage user={user} isAdmin={isAdmin} /></motion.div>}
+   639→          {activeTab === "complaints" && <motion.div key="page-complaints" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}><ComplaintPage user={user} isAdmin={isAdmin} /></motion.div>}
+   640→        </AnimatePresence>
+   641→      </div>
+   642→
+   643→      {/* ===== ADMIN PANEL (admin only) ===== */}
+   644→      <AnimatePresence>
+   645→        {showAdmin && isAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
+   646→      </AnimatePresence>
+   647→
+   648→      {/* ===== NETWORK MANAGER PANEL ===== */}
+   649→      <AnimatePresence>
+   650→        {showAdmin && userRole === "network_manager" && managedNetwork && <NetworkManagerPanel onClose={() => setShowAdmin(false)} managedNetwork={managedNetwork} />}
+   651→      </AnimatePresence>
+   652→
+   653→      {/* ===== AUTH FULL-PAGE VIEW ===== */}
+   654→      <AnimatePresence>
+   655→        {showAuth && (
+   656→          <motion.div
+   657→            key="auth-page"
+   658→            initial={{ opacity: 0, y: "100%" }}
+   659→            animate={{ opacity: 1, y: 0 }}
+   660→            exit={{ opacity: 0, y: "100%" }}
+   661→            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+   662→            className="fixed inset-0 z-50 bg-white overflow-hidden"
+   663→          >
+   664→            <AuthForm
+   665→              mode={authMode}
+   666→              onSuccess={() => setShowAuth(false)}
+   667→              onSwitchMode={() => setAuthMode(authMode === "login" ? "register" : "login")}
+   668→              onBack={() => setShowAuth(false)}
+   669→            />
+   670→          </motion.div>
+   671→        )}
+   672→      </AnimatePresence>
+   673→
+   674→      {/* ===== BOTTOM NAVIGATION (fixed like native app) ===== */}
+   675→      <nav className="relative flex-shrink-0 app-bottom-nav border-t border-gray-100/50 z-40 safe-bottom">
+   676→        <div className="max-w-lg mx-auto flex items-center justify-around py-1.5 px-1">
+   677→          {NAV_TABS.map((tab) => {
+   678→            const isActive = activeTab === tab.id;
+   679→            return (
+   680→              <motion.button
+   681→                key={tab.id}
+   682→                onClick={() => setActiveTab(tab.id)}
+   683→                whileTap={{ scale: 0.85 }}
+   684→                className={`relative flex flex-col items-center gap-0.5 px-3 py-1 rounded-2xl transition-colors haptic-press ${
+   685→                  isActive ? "text-[#1B7A3D]" : "text-gray-400"
+   686→                }`}
+   687→              >
+   688→                {/* Active indicator dot */}
+   689→                {isActive && (
+   690→                  <motion.div
+   691→                    layoutId="navDot"
+   692→                    className="absolute -top-1 w-5 h-1 rounded-full bg-[#1B7A3D]"
+   693→                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
+   694→                  />
+   695→                )}
+   696→                {/* Icon with bounce animation on tap - using tween for 3 keyframes */}
+   697→                <motion.div
+   698→                  animate={isActive ? { scale: [1, 1.18, 1] } : {}}
+   699→                  transition={{ type: "tween", duration: 0.35, ease: "easeInOut" }}
+   700→                >
+   701→                  <tab.icon className={`w-5 h-5 ${isActive ? "stroke-[2.5]" : ""}`} />
+   702→                </motion.div>
+   703→                <span className={`text-[9px] font-bold ${isActive ? "text-[#1B7A3D]" : ""}`}>{tab.label}</span>
+   704→              </motion.button>
+   705→            );
+   706→          })}
+   707→        </div>
+   708→      </nav>
+   709→
+   710→      {/* ===== ADMIN FLOATING BUTTON ===== */}
+   711→      {isAdmin && !showAdmin && (
+   712→        <motion.button
+   713→          whileTap={{ scale: 0.9 }}
+   714→          onClick={() => setShowAdmin(true)}
+   715→          className="fixed bottom-24 left-4 z-30 w-12 h-12 rounded-2xl bg-[#1B7A3D] shadow-lg flex items-center justify-center hover:bg-[#165E30] transition-colors btn-green-shadow haptic-press"
+   716→        >
+   717→          <Settings className="w-5 h-5 text-white" />
+   718→        </motion.button>
+   719→      )}
+   720→      {userRole === "network_manager" && !showAdmin && (
+   721→        <motion.button
+   722→          whileTap={{ scale: 0.9 }}
+   723→          onClick={() => setShowAdmin(true)}
+   724→          className="fixed bottom-24 left-4 z-30 w-12 h-12 rounded-2xl bg-orange-500 shadow-lg flex items-center justify-center hover:bg-orange-600 transition-colors haptic-press"
+   725→        >
+   726→          <Crown className="w-5 h-5 text-white" />
+   727→        </motion.button>
+   728→      )}
+   729→
+   730→      {/* ===== PERMISSION MODAL ===== */}
+   731→      <PermissionModal />
+   732→    </div>
+   733→  );
+   734→}
+   735→

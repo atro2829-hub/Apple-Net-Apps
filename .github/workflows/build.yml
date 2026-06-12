@@ -1,0 +1,447 @@
+name: Build & Deploy Apple.NET
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '22'
+  BUN_VERSION: '1.2.0'
+
+jobs:
+  build-user-apk:
+    name: Build User APK (com.applenet.app)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Install dependencies
+        run: |
+          npm install -g @capacitor/cli
+          bun install
+
+      - name: Create Firebase Admin SDK file
+        run: echo '${{ secrets.FIREBASE_ADMIN_SDK }}' > firebase-admin-sdk.json
+
+      - name: Build Next.js static export
+        run: |
+          cat > next.config.export.ts << 'EXPORTCONFIG'
+          import type { NextConfig } from "next";
+          const nextConfig: NextConfig = {
+            trailingSlash: true,
+            output: "export",
+            typescript: { ignoreBuildErrors: true },
+            eslint: { ignoreDuringBuilds: true },
+            reactStrictMode: false,
+            images: { unoptimized: true },
+          };
+          export default nextConfig;
+          EXPORTCONFIG
+          mv next.config.ts next.config.dev.ts
+          mv next.config.export.ts next.config.ts
+          rm -rf src/app/api src/app/admin
+          bun run build
+        env:
+          DATABASE_URL: "file:./dev.db"
+
+      - name: Setup Capacitor for User App
+        run: |
+          cat > capacitor.config.ts << 'CAPCONFIG'
+          import type { CapacitorConfig } from '@capacitor/cli';
+          const config: CapacitorConfig = {
+            appId: 'com.applenet.app',
+            appName: 'Apple.NET',
+            webDir: 'out',
+            server: { androidScheme: 'https', cleartext: false },
+            android: {
+              buildOptions: {
+                keystorePath: '../keystore/apple-net.keystore',
+                keystoreAlias: 'apple-net',
+                keystorePassword: 'applenet2026',
+                keystoreAliasPassword: 'applenet2026',
+              },
+              backgroundColor: '#1B7A3D',
+              allowMixedContent: false,
+              captureInput: true,
+              webContentsDebuggingEnabled: false,
+            },
+            plugins: {
+              PushNotifications: { presentationOptions: ['badge', 'sound', 'alert'] },
+              LocalNotifications: { smallIcon: 'ic_stat_icon_config_sample', iconColor: '#1B7A3D', sound: 'default' },
+              Haptics: {},
+              SplashScreen: {
+                launchShowDuration: 2000,
+                launchAutoHide: true,
+                backgroundColor: '#1B7A3D',
+                androidSplashResourceName: 'splash',
+                androidScaleType: 'CENTER_CROP',
+                showSpinner: false,
+                splashFullScreen: true,
+                splashImmersive: true,
+              },
+              BiometricAuth: { iosKeychainAccessGroup: 'com.applenet.app' },
+            },
+          };
+          export default config;
+          CAPCONFIG
+          rm -rf android
+          npx cap add android
+          npx cap sync android
+
+      - name: Apply custom build.gradle with signing
+        run: |
+          # Replace generated build.gradle with our custom one that has signing + Firebase
+          sed 's/APP_NAMESPACE/com.applenet.app/g; s/APP_PACKAGE/com.applenet.app/g' scripts/android-app-build.gradle > android/app/build.gradle
+
+      - name: Copy google-services.json
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+          mkdir -p android/app/src/main/assets
+          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/src/main/assets/google-services.json
+
+      - name: Apply custom app icons
+        run: |
+          ICON_DIR="public/icons/android"
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            DST="android/app/src/main/res/mipmap-${density}"
+            mkdir -p "$DST"
+            if [ -f "$ICON_DIR/mipmap-${density}/ic_launcher.png" ]; then
+              cp "$ICON_DIR/mipmap-${density}/ic_launcher.png" "$DST/"
+              cp "$ICON_DIR/mipmap-${density}/ic_launcher_foreground.png" "$DST/"
+              cp "$ICON_DIR/mipmap-${density}/ic_launcher_round.png" "$DST/"
+            fi
+          done
+          mkdir -p android/app/src/main/res/mipmap-anydpi-v26
+          cp "$ICON_DIR/mipmap-anydpi-v26/ic_launcher.xml" android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
+          cp "$ICON_DIR/mipmap-anydpi-v26/ic_launcher_round.xml" android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
+          mkdir -p android/app/src/main/res/values
+          cp "$ICON_DIR/ic_launcher_background.xml" android/app/src/main/res/values/ 2>/dev/null || true
+          SPLASH_DIR="public/splash"
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            for orient in port land; do
+              DST="android/app/src/main/res/drawable-${orient}-${density}"
+              mkdir -p "$DST"
+              if [ -f "$SPLASH_DIR/splash-${density}.png" ]; then
+                cp "$SPLASH_DIR/splash-${density}.png" "$DST/splash.png"
+              fi
+            done
+          done
+          mkdir -p android/app/src/main/res/drawable
+          if [ -f "$SPLASH_DIR/splash-xxhdpi.png" ]; then
+            cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
+          fi
+
+      - name: Build signed APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+      - name: Generate SHA keys
+        run: |
+          keytool -list -v -keystore keystore/apple-net.keystore -alias apple-net -storepass applenet2026 -keypass applenet2026 2>/dev/null | grep -E "SHA1:|SHA256:" > sha-keys.txt
+          cat sha-keys.txt
+
+      - name: Upload User APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Upload SHA keys
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha-keys
+          path: sha-keys.txt
+          retention-days: 30
+
+      - name: Restore dev config
+        if: always()
+        run: |
+          if [ -f next.config.dev.ts ]; then
+            mv next.config.dev.ts next.config.ts
+          fi
+
+  build-admin-apk:
+    name: Build Admin APK (com.applenet.admin)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Install dependencies
+        run: |
+          npm install -g @capacitor/cli
+          bun install
+
+      - name: Create Firebase Admin SDK file
+        run: echo '${{ secrets.FIREBASE_ADMIN_SDK }}' > firebase-admin-sdk.json
+
+      - name: Build Next.js static export
+        run: |
+          cat > next.config.export.ts << 'EXPORTCONFIG'
+          import type { NextConfig } from "next";
+          const nextConfig: NextConfig = {
+            trailingSlash: true,
+            output: "export",
+            typescript: { ignoreBuildErrors: true },
+            eslint: { ignoreDuringBuilds: true },
+            reactStrictMode: false,
+            images: { unoptimized: true },
+          };
+          export default nextConfig;
+          EXPORTCONFIG
+          mv next.config.ts next.config.dev.ts
+          mv next.config.export.ts next.config.ts
+          rm -rf src/app/api
+          bun run build
+        env:
+          DATABASE_URL: "file:./dev.db"
+
+      - name: Prepare admin web directory
+        run: |
+          rm -rf out-admin
+          cp -r out out-admin
+          cat > out-admin/index.html << 'REDIRECT'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0;url=/admin/">
+            <title>Apple.NET Admin</title>
+          </head>
+          <body>
+            <script>window.location.href = '/admin/';</script>
+          </body>
+          </html>
+          REDIRECT
+
+      - name: Setup Capacitor for Admin App
+        run: |
+          cat > capacitor.config.ts << 'CAPCONFIG'
+          import type { CapacitorConfig } from '@capacitor/cli';
+          const config: CapacitorConfig = {
+            appId: 'com.applenet.admin',
+            appName: 'Apple.NET Admin',
+            webDir: 'out-admin',
+            server: { androidScheme: 'https', cleartext: false },
+            android: {
+              buildOptions: {
+                keystorePath: '../keystore/apple-net.keystore',
+                keystoreAlias: 'apple-net',
+                keystorePassword: 'applenet2026',
+                keystoreAliasPassword: 'applenet2026',
+              },
+              backgroundColor: '#1B7A3D',
+              allowMixedContent: false,
+              captureInput: true,
+              webContentsDebuggingEnabled: false,
+            },
+            plugins: {
+              PushNotifications: { presentationOptions: ['badge', 'sound', 'alert'] },
+              LocalNotifications: { smallIcon: 'ic_stat_icon_config_sample', iconColor: '#1B7A3D', sound: 'default' },
+              Haptics: {},
+              SplashScreen: {
+                launchShowDuration: 2000,
+                launchAutoHide: true,
+                backgroundColor: '#1B7A3D',
+                androidSplashResourceName: 'splash',
+                androidScaleType: 'CENTER_CROP',
+                showSpinner: false,
+                splashFullScreen: true,
+                splashImmersive: true,
+              },
+            },
+          };
+          export default config;
+          CAPCONFIG
+          rm -rf android
+          npx cap add android
+          npx cap sync android
+
+      - name: Apply custom build.gradle with signing + admin package
+        run: |
+          sed 's/APP_NAMESPACE/com.applenet.admin/g; s/APP_PACKAGE/com.applenet.admin/g' scripts/android-app-build.gradle > android/app/build.gradle
+
+      - name: Set admin package name in other files
+        run: |
+          find android -name "AndroidManifest.xml" -exec sed -i 's/com\.applenet\.app/com.applenet.admin/g' {} \;
+          find android -name "strings.xml" -exec sed -i 's/Apple\.NET/Apple.NET Admin/g' {} \;
+          mkdir -p android/app/src/main/java/com/applenet/admin
+          if [ -f android/app/src/main/java/com/applenet/app/MainActivity.java ]; then
+            sed 's/com\.applenet\.app/com.applenet.admin/g' android/app/src/main/java/com/applenet/app/MainActivity.java > android/app/src/main/java/com/applenet/admin/MainActivity.java
+            rm -rf android/app/src/main/java/com/applenet/app
+          fi
+
+      - name: Copy google-services.json
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+          mkdir -p android/app/src/main/assets
+          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/src/main/assets/google-services.json
+
+      - name: Apply custom app icons
+        run: |
+          ICON_DIR="public/icons/android"
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            DST="android/app/src/main/res/mipmap-${density}"
+            mkdir -p "$DST"
+            if [ -f "$ICON_DIR/mipmap-${density}/ic_launcher.png" ]; then
+              cp "$ICON_DIR/mipmap-${density}/ic_launcher.png" "$DST/"
+              cp "$ICON_DIR/mipmap-${density}/ic_launcher_foreground.png" "$DST/"
+              cp "$ICON_DIR/mipmap-${density}/ic_launcher_round.png" "$DST/"
+            fi
+          done
+          mkdir -p android/app/src/main/res/mipmap-anydpi-v26
+          cp "$ICON_DIR/mipmap-anydpi-v26/ic_launcher.xml" android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
+          cp "$ICON_DIR/mipmap-anydpi-v26/ic_launcher_round.xml" android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
+          mkdir -p android/app/src/main/res/values
+          cp "$ICON_DIR/ic_launcher_background.xml" android/app/src/main/res/values/ 2>/dev/null || true
+          SPLASH_DIR="public/splash"
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            for orient in port land; do
+              DST="android/app/src/main/res/drawable-${orient}-${density}"
+              mkdir -p "$DST"
+              if [ -f "$SPLASH_DIR/splash-${density}.png" ]; then
+                cp "$SPLASH_DIR/splash-${density}.png" "$DST/splash.png"
+              fi
+            done
+          done
+          mkdir -p android/app/src/main/res/drawable
+          if [ -f "$SPLASH_DIR/splash-xxhdpi.png" ]; then
+            cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
+          fi
+
+      - name: Build signed APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+      - name: Upload Admin APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Restore dev config
+        if: always()
+        run: |
+          if [ -f next.config.dev.ts ]; then
+            mv next.config.dev.ts next.config.ts
+          fi
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-user-apk, build-admin-apk]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Read SHA keys
+        id: sha
+        run: |
+          if [ -f artifacts/sha-keys/sha-keys.txt ]; then
+            SHA1=$(grep "SHA1:" artifacts/sha-keys/sha-keys.txt | head -1 | sed 's/.*SHA1: //')
+            SHA256=$(grep "SHA256:" artifacts/sha-keys/sha-keys.txt | head -1 | sed 's/.*SHA256: //')
+          else
+            SHA1="C9:DA:33:A9:EF:88:69:F0:DA:94:CF:67:DF:C8:BA:8A:DA:A7:81:19"
+            SHA256="B9:E8:3F:28:40:92:40:FE:2E:D5:9D:9D:5A:50:7C:FD:FE:42:D5:A2:F7:8C:31:0F:C1:4B:87:27:63:D0:61:67"
+          fi
+          echo "sha1=$SHA1" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+
+      - name: Delete existing release if present
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Apple.NET v${{ steps.version.outputs.version }}
+          body: |
+            ## Apple.NET v${{ steps.version.outputs.version }}
+            
+            ### تطبيق المستخدم (User App)
+            - Package: `com.applenet.app`
+            - Download: `app-release.apk`
+            
+            ### تطبيق الأدمن (Admin App)
+            - Package: `com.applenet.admin`
+            - Download: `admin-release.apk`
+            
+            ### مفاتيح SHA للفايربيز
+            - SHA1: `${{ steps.sha.outputs.sha1 }}`
+            - SHA256: `${{ steps.sha.outputs.sha256 }}`
+          files: |
+            artifacts/app-release-apk/*.apk
+            artifacts/admin-release-apk/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

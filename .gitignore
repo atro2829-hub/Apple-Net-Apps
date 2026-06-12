@@ -1,0 +1,73 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+local-*
+.claude
+.z-ai-config
+*.log
+dev.log
+dev.out.log
+test
+prompt
+
+server.log
+# Skills directory
+/skills/
+
+# Keystore passwords - keep keystore but not passwords in env
+firebase-admin-sdk.json
+
+# Capacitor build artifacts
+android/.gradle/
+android/app/build/
+android/build/
+ios/build/
+capacitor-admin/node_modules/
+
+# Uploads (user-generated content)
+public/uploads/
+# Sensitive files - NEVER commit
+firebase-admin-sdk.json
+google-services.json
+upload/*.json
+android/app/google-services.json
+android/app/src/main/assets/google-services.json
