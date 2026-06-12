@@ -431,6 +431,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Rename admin APK for release
+        run: |
+          # The admin APK artifact contains app-release.apk, rename it to avoid name conflict
+          if [ -f artifacts/admin-release-apk/app-release.apk ]; then
+            mv artifacts/admin-release-apk/app-release.apk artifacts/admin-release-apk/admin-release.apk
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
