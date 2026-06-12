@@ -244,27 +244,13 @@ jobs:
           mv next.config.ts next.config.dev.ts
           mv next.config.export.ts next.config.ts
           rm -rf src/app/api
+          # Replace user page with admin page content for admin app build
+          cp src/app/admin/page.tsx src/app/page.tsx
+          # Remove the admin route to avoid duplicate
+          rm -rf src/app/admin
           bun run build
         env:
           DATABASE_URL: "file:./dev.db"
-
-      - name: Prepare admin web directory
-        run: |
-          rm -rf out-admin
-          cp -r out out-admin
-          cat > out-admin/index.html << 'REDIRECT'
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="utf-8">
-            <meta http-equiv="refresh" content="0;url=/admin/">
-            <title>Apple.NET Admin</title>
-          </head>
-          <body>
-            <script>window.location.href = '/admin/';</script>
-          </body>
-          </html>
-          REDIRECT
 
       - name: Setup Capacitor for Admin App
         run: |
@@ -273,7 +259,7 @@ jobs:
           const config: CapacitorConfig = {
             appId: 'com.applenet.admin',
             appName: 'Apple.NET Admin',
-            webDir: 'out-admin',
+            webDir: 'out',
             server: { androidScheme: 'https', cleartext: false },
             android: {
               buildOptions: {
@@ -301,6 +287,7 @@ jobs:
                 splashFullScreen: true,
                 splashImmersive: true,
               },
+              BiometricAuth: { iosKeychainAccessGroup: 'com.applenet.admin' },
             },
           };
           export default config;

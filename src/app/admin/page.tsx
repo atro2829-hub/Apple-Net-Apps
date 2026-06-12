@@ -9,6 +9,7 @@ import { AdminPanel } from "@/components/AdminPanel";
 import { AuthForm } from "@/components/AuthForm";
 import { AppleNetLogo } from "@/components/AppleNetLogo";
 import { Shield, Lock, Loader2 } from "lucide-react";
+import { initFCMToken } from "@/lib/notifications";
 
 type AuthState = "loading" | "unauthenticated" | "not_admin" | "admin";
 
@@ -33,6 +34,8 @@ export default function AdminPage() {
 
         if (role === "admin" || role === "network_manager") {
           setAuthState("admin");
+          // Initialize FCM for push notifications
+          initFCMToken(user.uid).catch(() => {});
         } else {
           setAuthState("not_admin");
         }

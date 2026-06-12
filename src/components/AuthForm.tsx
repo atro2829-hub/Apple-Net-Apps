@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Eye, EyeOff, Mail, Lock, User, Phone, CheckCircle2, ArrowRight,
-  Shield, Wifi, Zap, ChevronLeft, Globe, Building2, MapPin
+  Shield, Wifi, Zap, ChevronLeft, Globe, Building2, MapPin, Fingerprint
 } from "lucide-react";
 import { auth, db } from "@/lib/firebase";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
@@ -77,6 +77,61 @@ export function AuthForm({ mode, onSuccess, onSwitchMode, onBack }: AuthFormProp
   const [resetSent, setResetSent] = useState(false);
   const [provinceId, setProvinceId] = useState("");
   const [district, setDistrict] = useState("");
+
+  const isAr = isRTL;
+
+  const handleBiometricLogin = async () => {
+    try {
+      // Check if running in Capacitor native app
+      if (typeof window !== "undefined" && "Capacitor" in window) {
+        try {
+          const { BiometricAuth } = await import("@aparajita/capacitor-biometric-auth");
+          const result = await BiometricAuth.authenticate({
+            reason: isAr ? "تسجيل الدخول بالبصمة" : "Login with fingerprint",
+            cancelTitle: isAr ? "إلغاء" : "Cancel",
+            fallbackTitle: isAr ? "استخدام كلمة المرور" : "Use password",
+          });
+          if (result.status === "success") {
+            toast.success(isAr ? "تم التحقق بالبصمة بنجاح" : "Fingerprint verified successfully");
+            onSuccess();
+          }
+        } catch {
+          // Plugin not available, try WebAuthn
+          toast.error(isAr ? "فشل التحقق بالبصمة" : "Fingerprint verification failed");
+        }
+        return;
+      }
+
+      // WebAuthn fallback for browser
+      if (window.PublicKeyCredential) {
+        const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        if (available) {
+          const challenge = new Uint8Array(32);
+          crypto.getRandomValues(challenge);
+          const credential = await navigator.credentials.create({
+            publicKey: {
+              challenge,
+              rp: { name: "Apple.NET" },
+              user: { id: new TextEncoder().encode("biometric-login"), name: "user", displayName: "User" },
+              pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+              authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
+              timeout: 60000,
+            },
+          });
+          if (credential) {
+            toast.success(isAr ? "تم التحقق بالبصمة بنجاح" : "Fingerprint verified successfully");
+            onSuccess();
+          }
+        } else {
+          toast.error(isAr ? "جهازك لا يدعم البصمة" : "Device doesn't support biometrics");
+        }
+      } else {
+        toast.error(isAr ? "البصمة غير مدعومة في هذا المتصفح" : "Biometrics not supported in this browser");
+      }
+    } catch {
+      toast.error(isAr ? "فشل في التحقق بالبصمة" : "Fingerprint verification failed");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -498,6 +553,25 @@ export function AuthForm({ mode, onSuccess, onSwitchMode, onBack }: AuthFormProp
                 {mode === "login" ? t("auth2.noAccount") : t("auth2.hasAccount")}
               </button>
             </div>
+
+            {/* Biometric Login Button (login only) */}
+            {mode === "login" && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="mt-3"
+              >
+                <button
+                  type="button"
+                  onClick={handleBiometricLogin}
+                  className="w-full flex items-center justify-center gap-2.5 bg-gray-50 hover:bg-gray-100 border-2 border-gray-200 text-gray-700 font-bold text-sm rounded-2xl h-11 transition-colors"
+                >
+                  <Fingerprint className="w-5 h-5 text-purple-500" />
+                  {isAr ? "الدخول بالبصمة" : "Sign in with Fingerprint"}
+                </button>
+              </motion.div>
+            )}
           </motion.form>
 
           {/* ===== Features Section ===== */}

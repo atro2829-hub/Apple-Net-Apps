@@ -44,16 +44,16 @@ export function BiometricAuth({ user }: BiometricAuthProps) {
   // Check biometric capability
   useEffect(() => {
     if (typeof window !== "undefined") {
+      // Check if running in Capacitor native app
+      if ("Capacitor" in window) {
+        setHasBiometricCapability(true);
+        return;
+      }
       // Check if WebAuthn is available
       if (window.PublicKeyCredential) {
         PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then((available) => {
           setHasBiometricCapability(available);
         }).catch(() => setHasBiometricCapability(false));
-      }
-      // Also check Capacitor native biometric
-      // This will be available when running in the native app
-      if ("Capacitor" in window) {
-        Promise.resolve().then(() => setHasBiometricCapability(true));
       }
     }
   }, []);
@@ -62,13 +62,31 @@ export function BiometricAuth({ user }: BiometricAuthProps) {
     if (!user) return;
     
     if (!biometricEnabled) {
-      // Enabling biometric - verify it works first
       try {
+        // Try Capacitor native biometric first
+        if (typeof window !== "undefined" && "Capacitor" in window) {
+          try {
+            const { BiometricAuth } = await import("@aparajita/capacitor-biometric-auth");
+            const { status } = await BiometricAuth.authenticate({
+              reason: isAr ? "تفعيل الدخول بالبصمة" : "Enable fingerprint login",
+              cancelTitle: isAr ? "إلغاء" : "Cancel",
+              fallbackTitle: isAr ? "استخدام كلمة المرور" : "Use password",
+            });
+            if (status === "success") {
+              await update(ref(db, `users/${user.uid}`), { biometricEnabled: true });
+              setBiometricEnabled(true);
+              toast.success(isAr ? "تم تفعيل البصمة بنجاح" : "Biometric enabled successfully");
+              return;
+            }
+          } catch {
+            // Plugin not available, fall through to WebAuthn
+          }
+        }
+        
+        // WebAuthn fallback
         if (hasBiometricCapability && window.PublicKeyCredential) {
-          // Create a simple challenge for biometric verification
           const challenge = new Uint8Array(32);
           crypto.getRandomValues(challenge);
-          
           const credential = await navigator.credentials.create({
             publicKey: {
               challenge,
@@ -86,7 +104,6 @@ export function BiometricAuth({ user }: BiometricAuthProps) {
               timeout: 60000,
             },
           });
-          
           if (credential) {
             await update(ref(db, `users/${user.uid}`), { biometricEnabled: true });
             setBiometricEnabled(true);

@@ -43,9 +43,6 @@ const config: CapacitorConfig = {
       splashFullScreen: true,
       splashImmersive: true,
     },
-    BiometricAuth: {
-      iosKeychainAccessGroup: 'com.applenet.app',
-    },
   },
 };
 
