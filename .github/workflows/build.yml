@@ -52,7 +52,7 @@ jobs:
 
       - name: 🏗️ Build Next.js static export
         run: |
-          # Create export config
+          # Create export config with optimizations
           cat > next.config.build.ts << 'EXPORTCONFIG'
           import type { NextConfig } from "next";
           const nextConfig: NextConfig = {
@@ -62,6 +62,15 @@ jobs:
             eslint: { ignoreDuringBuilds: true },
             reactStrictMode: false,
             images: { unoptimized: true },
+            experimental: {
+              optimizePackageImports: [
+                "lucide-react",
+                "date-fns",
+                "@radix-ui/react-icons",
+                "recharts",
+                "framer-motion",
+              ],
+            },
           };
           export default nextConfig;
           EXPORTCONFIG
@@ -176,7 +185,7 @@ jobs:
           mkdir -p android/app/src/main/res/values
           echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#1B7A3D</color></resources>' > android/app/src/main/res/values/ic_launcher_background.xml
 
-          # Copy splash
+          # Copy splash - only Android density variants
           SPLASH_DIR="public/splash"
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             for orient in port land; do
@@ -188,6 +197,10 @@ jobs:
           mkdir -p android/app/src/main/res/drawable
           [ -f "$SPLASH_DIR/splash-xxhdpi.png" ] && cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
 
+          # ─── Enable minification for smaller APK ───
+          sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
+          sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
+
           # Build
           cd android
           chmod +x gradlew
@@ -198,7 +211,8 @@ jobs:
           mkdir -p download
           APK_PATH=$(find android/app/build/outputs -name '*.apk' -type f | head -1)
           if [ -n "$APK_PATH" ]; then
-            echo "Found APK at: $APK_PATH"
+            APK_SIZE=$(du -h "$APK_PATH" | cut -f1)
+            echo "📱 User APK size: $APK_SIZE"
             cp "$APK_PATH" download/app-release.apk
             echo "✅ User APK built!"
           else
@@ -292,7 +306,7 @@ jobs:
           mkdir -p android/app/src/main/res/values
           echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#10b981</color></resources>' > android/app/src/main/res/values/ic_launcher_background.xml
 
-          # Copy splash
+          # Copy splash - only Android density variants
           SPLASH_DIR="public/splash"
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             for orient in port land; do
@@ -304,6 +318,10 @@ jobs:
           mkdir -p android/app/src/main/res/drawable
           [ -f "$SPLASH_DIR/splash-xxhdpi.png" ] && cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
 
+          # ─── Enable minification for smaller APK ───
+          sed -i 's/minifyEnabled false/minifyEnabled true/g' android/app/build.gradle
+          sed -i 's/shrinkResources false/shrinkResources true/g' android/app/build.gradle
+
           # Build
           cd android
           chmod +x gradlew
@@ -314,7 +332,8 @@ jobs:
           mkdir -p download
           APK_PATH=$(find android/app/build/outputs -name '*.apk' -type f | head -1)
           if [ -n "$APK_PATH" ]; then
-            echo "Found APK at: $APK_PATH"
+            APK_SIZE=$(du -h "$APK_PATH" | cut -f1)
+            echo "📱 Admin APK size: $APK_SIZE"
             cp "$APK_PATH" download/admin-release.apk
             echo "✅ Admin APK built!"
           else

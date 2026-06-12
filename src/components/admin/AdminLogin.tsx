@@ -5,10 +5,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
-  Eye, EyeOff, Mail, Lock, Shield, Loader2, Fingerprint, CheckCircle2, AlertCircle
+  Eye, EyeOff, Mail, Lock, Shield, Loader2, Fingerprint, CheckCircle2, AlertCircle, KeyRound
 } from "lucide-react";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { ref, get } from "firebase/database";
 import { toast } from "sonner";
 import { sanitizeInput, isValidEmail } from "@/lib/utils";
 
@@ -20,6 +21,7 @@ const FIREBASE_ERROR_AR: Record<string, string> = {
   "auth/too-many-requests": "محاولات كثيرة، حاول لاحقاً",
   "auth/invalid-credential": "بيانات الدخول غير صحيحة",
   "auth/network-request-failed": "خطأ في الاتصال بالشبكة",
+  "auth/user-disabled": "تم تعطيل هذا الحساب",
 };
 
 function getErrorMessage(err: unknown): string {
@@ -30,7 +32,7 @@ function getErrorMessage(err: unknown): string {
   return "حدث خطأ غير متوقع";
 }
 
-// ─── Biometric Check ─────────────────────────────────────
+// ─── Biometric Auth ─────────────────────────────────────
 async function checkBiometricAvailable(): Promise<boolean> {
   try {
     if (typeof window !== "undefined" && "Capacitor" in window) {
@@ -39,7 +41,7 @@ async function checkBiometricAvailable(): Promise<boolean> {
       return result.isAvailable;
     }
   } catch {
-    // Not available or plugin not installed
+    // Not available
   }
   return false;
 }
@@ -63,8 +65,39 @@ async function authenticateWithBiometric(): Promise<boolean> {
   return false;
 }
 
+// ─── Secure credential storage ──────────────────────────
+const CREDS_EMAIL_KEY = "applenet_admin_email";
+const CREDS_FLAG_KEY = "applenet_admin_has_creds";
+const CREDS_PASS_KEY = "applenet_admin_enc_pass";
+
+function saveCredentials(email: string, password: string): void {
+  try {
+    localStorage.setItem(CREDS_EMAIL_KEY, email);
+    localStorage.setItem(CREDS_FLAG_KEY, "true");
+    // Simple encoding (not truly secure, but better than plain text)
+    const encoded = btoa(unescape(encodeURIComponent(password)));
+    localStorage.setItem(CREDS_PASS_KEY, encoded);
+  } catch {
+    // Storage not available
+  }
+}
+
+function getSavedCredentials(): { email: string; password: string } | null {
+  try {
+    const hasCreds = localStorage.getItem(CREDS_FLAG_KEY);
+    if (!hasCreds) return null;
+    const email = localStorage.getItem(CREDS_EMAIL_KEY);
+    const encoded = localStorage.getItem(CREDS_PASS_KEY);
+    if (!email || !encoded) return null;
+    const password = decodeURIComponent(escape(atob(encoded)));
+    return { email, password };
+  } catch {
+    return null;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════
-// COMPONENT
+// COMPONENT - Professional Admin Login
 // ═══════════════════════════════════════════════════════════
 export function AdminLogin() {
   const [email, setEmail] = useState("");
@@ -75,22 +108,23 @@ export function AdminLogin() {
   const [resetSent, setResetSent] = useState(false);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricLoading, setBiometricLoading] = useState(false);
+  const [hasSavedCreds, setHasSavedCreds] = useState(false);
 
-  // Check biometric availability
+  // Check biometric and saved credentials
   useEffect(() => {
-    checkBiometricAvailable().then(setBiometricAvailable);
+    checkBiometricAvailable().then(available => {
+      setBiometricAvailable(available);
+      if (available) {
+        const creds = getSavedCredentials();
+        if (creds) {
+          setHasSavedCreds(true);
+          setEmail(creds.email);
+        }
+      }
+    });
   }, []);
 
-  // Load saved credentials for biometric
-  useEffect(() => {
-    if (biometricAvailable) {
-      const savedEmail = localStorage.getItem("admin_saved_email");
-      const hasSavedCreds = localStorage.getItem("admin_has_saved_creds");
-      if (savedEmail) setEmail(savedEmail);
-    }
-  }, [biometricAvailable]);
-
-  // ─── Login ─────────────────────────────────────────────
+  // ─── Email/Password Login ──────────────────────────────
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = sanitizeInput(email.trim());
@@ -104,10 +138,18 @@ export function AdminLogin() {
     }
     setSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, cleanEmail, password);
+      const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      // Verify admin role
+      const roleSnapshot = await get(ref(db, `users/${userCredential.user.uid}/role`));
+      const role = roleSnapshot.val();
+      if (role !== "admin" && role !== "network_manager") {
+        await auth.signOut();
+        toast.error("ليس لديك صلاحيات إدارية");
+        return;
+      }
       // Save credentials for biometric next time
-      localStorage.setItem("admin_saved_email", cleanEmail);
-      localStorage.setItem("admin_has_saved_creds", "true");
+      saveCredentials(cleanEmail, password);
+      setHasSavedCreds(true);
       toast.success("تم تسجيل الدخول بنجاح");
     } catch (err: unknown) {
       toast.error(getErrorMessage(err));
@@ -126,11 +168,9 @@ export function AdminLogin() {
         return;
       }
 
-      const savedEmail = localStorage.getItem("admin_saved_email");
-      const savedPassword = localStorage.getItem("admin_saved_password");
-
-      if (savedEmail && savedPassword) {
-        await signInWithEmailAndPassword(auth, savedEmail, savedPassword);
+      const creds = getSavedCredentials();
+      if (creds) {
+        await signInWithEmailAndPassword(auth, creds.email, creds.password);
         toast.success("تم تسجيل الدخول بالبصمة");
       } else {
         toast.error("لا توجد بيانات محفوظة. سجل دخولك أولاً بالبريد وكلمة المرور");
@@ -169,25 +209,27 @@ export function AdminLogin() {
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-900" dir="rtl">
       {/* Background pattern */}
-      <div className="absolute inset-0 opacity-5">
+      <div className="absolute inset-0 opacity-[0.03]">
         <div className="absolute inset-0" style={{
           backgroundImage: `radial-gradient(circle at 1px 1px, white 1px, transparent 0)`,
-          backgroundSize: "40px 40px",
+          backgroundSize: "32px 32px",
         }} />
       </div>
 
-      {/* Top Section */}
-      <div className="flex-shrink-0 pt-16 pb-8 flex flex-col items-center relative z-10">
+      {/* Top Section - Logo & Branding */}
+      <div className="flex-shrink-0 pt-12 pb-8 flex flex-col items-center relative z-10">
         <motion.div
           initial={{ scale: 0.5, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: "spring", stiffness: 200, damping: 15 }}
           className="flex flex-col items-center gap-4"
         >
-          {/* Logo */}
+          {/* Logo Icon */}
           <div className="w-20 h-20 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20 shadow-2xl">
             <Shield className="w-10 h-10 text-white" />
           </div>
+
+          {/* Brand */}
           <div className="text-center">
             <h1 className="text-2xl font-black text-white tracking-tight">Apple.NET</h1>
             <p className="text-emerald-200 text-sm font-medium mt-1">لوحة الإدارة والتحكم</p>
@@ -216,6 +258,7 @@ export function AdminLogin() {
         <div className="p-6 pt-8 max-w-md mx-auto">
           <AnimatePresence mode="wait">
             {resetMode ? (
+              /* ─── Password Reset Mode ─── */
               <motion.div
                 key="reset"
                 initial={{ opacity: 0, x: -20 }}
@@ -243,6 +286,9 @@ export function AdminLogin() {
                 ) : (
                   <form onSubmit={handleReset} className="space-y-4">
                     <div className="text-center mb-6">
+                      <div className="w-12 h-12 rounded-xl bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center mx-auto mb-3">
+                        <KeyRound className="w-6 h-6 text-amber-600" />
+                      </div>
                       <h3 className="text-lg font-bold text-gray-900 dark:text-white">نسيت كلمة المرور؟</h3>
                       <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">أدخل بريدك الإلكتروني وسنرسل لك رابط إعادة التعيين</p>
                     </div>
@@ -267,6 +313,7 @@ export function AdminLogin() {
                 )}
               </motion.div>
             ) : (
+              /* ─── Login Mode ─── */
               <motion.div
                 key="login"
                 initial={{ opacity: 0, x: 20 }}
@@ -300,9 +347,7 @@ export function AdminLogin() {
                     <Input
                       type={showPass ? "text" : "password"}
                       value={password}
-                      onChange={e => {
-                        setPassword(e.target.value);
-                      }}
+                      onChange={e => setPassword(e.target.value)}
                       placeholder="كلمة المرور"
                       className="h-12 pr-10 pl-10 rounded-xl border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-sm"
                       dir="ltr"
@@ -344,20 +389,24 @@ export function AdminLogin() {
                     )}
                   </Button>
 
-                  {/* Biometric Login */}
+                  {/* Biometric Login - Always show if available and has saved creds */}
                   {biometricAvailable && (
                     <button
                       type="button"
                       onClick={handleBiometricLogin}
-                      disabled={biometricLoading}
-                      className="w-full h-12 rounded-xl border-2 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 font-bold text-sm flex items-center justify-center gap-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-all duration-200"
+                      disabled={biometricLoading || !hasSavedCreds}
+                      className={`w-full h-12 rounded-xl border-2 font-bold text-sm flex items-center justify-center gap-2 transition-all duration-200 ${
+                        hasSavedCreds
+                          ? "border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
+                          : "border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                      }`}
                     >
                       {biometricLoading ? (
                         <Loader2 className="w-5 h-5 animate-spin" />
                       ) : (
                         <>
                           <Fingerprint className="w-5 h-5" />
-                          تسجيل الدخول بالبصمة
+                          {hasSavedCreds ? "تسجيل الدخول بالبصمة" : "سجل دخولك أولاً لتفعيل البصمة"}
                         </>
                       )}
                     </button>
