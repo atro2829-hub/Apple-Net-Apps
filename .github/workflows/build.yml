@@ -243,11 +243,40 @@ jobs:
           EXPORTCONFIG
           mv next.config.ts next.config.dev.ts
           mv next.config.export.ts next.config.ts
+          # Remove API routes (not needed for static export)
           rm -rf src/app/api
-          # Replace user page with admin page content for admin app build
+          # Replace entire app directory with admin app files
+          # admin/layout.tsx is a proper root layout with <html>/<body>
+          # admin/page.tsx is the admin entry point
+          cp src/app/admin/layout.tsx src/app/layout.tsx
           cp src/app/admin/page.tsx src/app/page.tsx
-          # Remove the admin route to avoid duplicate
+          # Remove the admin route since we moved it to root
           rm -rf src/app/admin
+          # Remove user-only components to keep APK clean
+          rm -f src/components/HomePage.tsx
+          rm -f src/components/CardsPage.tsx
+          rm -f src/components/PurchasedPage.tsx
+          rm -f src/components/CreditPage.tsx
+          rm -f src/components/DepositPage.tsx
+          rm -f src/components/TelecomRechargePage.tsx
+          rm -f src/components/BanksPage.tsx
+          rm -f src/components/SimsPage.tsx
+          rm -f src/components/AdsPage.tsx
+          rm -f src/components/StarlinkPage.tsx
+          rm -f src/components/ChatPage.tsx
+          rm -f src/components/MorePage.tsx
+          rm -f src/components/ProfilePage.tsx
+          rm -f src/components/OnboardingFlow.tsx
+          rm -f src/components/NetworkDetailModal.tsx
+          rm -f src/components/NetworkSubmissionPage.tsx
+          rm -f src/components/NotificationCenter.tsx
+          rm -f src/components/BiometricAuth.tsx
+          rm -f src/components/PinLockScreen.tsx
+          rm -f src/components/iOSInstallBanner.tsx
+          rm -f src/components/AppUpdateBanner.tsx
+          rm -f src/components/PermissionModal.tsx
+          rm -f src/components/ComplaintPage.tsx
+          rm -f src/components/AuthForm.tsx
           bun run build
         env:
           DATABASE_URL: "file:./dev.db"

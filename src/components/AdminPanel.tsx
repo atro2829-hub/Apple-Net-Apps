@@ -69,6 +69,7 @@ const ADMIN_TAB_IDS = [
   { id: "commissions", icon: Banknote, labelKey: "admin2.commissions" },
   { id: "subscriptions", icon: Crown, labelKey: "admin2.subscriptions" },
   { id: "notifications", icon: Bell, labelKey: "admin2.notifications" },
+  { id: "pdfReports", icon: FileText, labelKey: "" },
   { id: "content", icon: FileText, labelKey: "admin2.content" },
   { id: "saleLocations", icon: Store, labelKey: "admin2.saleLocations" },
   { id: "settings", icon: SettingsIcon, labelKey: "admin2.settings" },
@@ -90,7 +91,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
   const ADMIN_TABS = useMemo(() =>
     ADMIN_TAB_IDS.map(tab => ({
       ...tab,
-      label: tab.id === "starlink" ? "Starlink" : t(tab.labelKey),
+      label: tab.id === "starlink" ? "Starlink" : tab.id === "pdfReports" ? "تقارير PDF" : t(tab.labelKey),
     })),
     [t]
   );
@@ -3612,6 +3613,56 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
             )}
 
             {/* ═══ TAB 15: محتوى التطبيق ═══ */}
+            {/* ═══ TAB: تقارير PDF ═══ */}
+            {activeTab === "pdfReports" && (
+              <motion.div key="pdfReports" variants={sectionVariants} initial="initial" animate="animate" exit="exit" transition={iOSSpring.gentle} className="space-y-4">
+                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-gray-700 p-4">
+                  <div className="flex items-center gap-2 mb-4">
+                    <FileText className="w-5 h-5 text-[#1B7A3D]" />
+                    <h3 className="text-base font-bold text-gray-900 dark:text-white">تقارير PDF - تنزيل إلى الجهاز</h3>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-4">أنشئ تقارير PDF مفصلة وقم بتنزيلها مباشرة إلى جهازك</p>
+                  <div className="grid gap-3">
+                    <button onClick={() => { const av = filteredCards.filter(c => !c.isUsed); const sd = filteredCards.filter(c => c.isUsed); const d = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }); d.setFontSize(18); d.setFont("helvetica", "bold"); d.text("Apple.NET - Cards Report", 148, 15, { align: "center" }); d.setFontSize(9); d.setFont("helvetica", "normal"); d.text(`Total: ${filteredCards.length} | Available: ${av.length} | Sold: ${sd.length}`, 148, 22, { align: "center" }); autoTable(d, { startY: 28, head: [['Code', 'Price', 'Data', 'Duration', 'Tier', 'Network', 'Status', 'Used By', 'Date']], body: filteredCards.map(c => [c.code, `${c.price} YER`, c.data || '-', c.duration ? `${c.duration}d` : '-', c.tier || '-', c.network || '-', c.isUsed ? 'SOLD' : 'AVAIL', c.usedBy || '-', c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US") : '-']), styles: { fontSize: 7, cellPadding: 2 }, headStyles: { fillColor: [27, 122, 61], textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [240, 248, 240] } }); d.save(`AppleNet-Cards-${Date.now()}.pdf`); toast.success("تم إنشاء تقرير الكروت PDF"); }} className="w-full flex items-center gap-3 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-2xl p-4 transition-colors text-right">
+                      <div className="w-10 h-10 rounded-xl bg-[#1B7A3D] flex items-center justify-center flex-shrink-0"><CreditCard className="w-5 h-5 text-white" /></div>
+                      <div className="flex-1"><p className="text-sm font-bold text-gray-900 dark:text-white">تقرير الكروت</p><p className="text-[10px] text-gray-500">جميع الكروت المتاحة والمباعة ({filteredCards.length} كرت)</p></div>
+                      <Download className="w-5 h-5 text-[#1B7A3D]" />
+                    </button>
+                    <button onClick={() => { const d = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }); d.setFontSize(18); d.setFont("helvetica", "bold"); d.text("Apple.NET - Users Report", 148, 15, { align: "center" }); d.setFontSize(9); d.setFont("helvetica", "normal"); d.text(`Total Users: ${usersList.length}`, 148, 22, { align: "center" }); autoTable(d, { startY: 28, head: [['Name', 'Email', 'Phone', 'Role', 'Balance', 'Province', 'Joined']], body: usersList.map(u => [u.displayName || '-', u.email || '-', u.phone || '-', u.role || 'user', `${userBalances[u.id] || 0} YER`, u.provinceId || '-', u.createdAt ? new Date(u.createdAt).toLocaleDateString("en-US") : '-']), styles: { fontSize: 7, cellPadding: 2 }, headStyles: { fillColor: [27, 122, 61], textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [240, 248, 240] } }); d.save(`AppleNet-Users-${Date.now()}.pdf`); toast.success("تم إنشاء تقرير المستخدمين PDF"); }} className="w-full flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 transition-colors text-right">
+                      <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0"><Users className="w-5 h-5 text-white" /></div>
+                      <div className="flex-1"><p className="text-sm font-bold text-gray-900 dark:text-white">تقرير المستخدمين</p><p className="text-[10px] text-gray-500">جميع المستخدمين وأرصدتهم ({usersList.length} مستخدم)</p></div>
+                      <Download className="w-5 h-5 text-blue-600" />
+                    </button>
+                    <button onClick={() => { const d = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }); d.setFontSize(18); d.setFont("helvetica", "bold"); d.text("Apple.NET - Deposits Report", 148, 15, { align: "center" }); const pn = depositsList.filter(x => x.status === "pending").length; const ap = depositsList.filter(x => x.status === "approved").length; const rj = depositsList.filter(x => x.status === "rejected").length; d.setFontSize(9); d.setFont("helvetica", "normal"); d.text(`Total: ${depositsList.length} | Pending: ${pn} | Approved: ${ap} | Rejected: ${rj}`, 148, 22, { align: "center" }); autoTable(d, { startY: 28, head: [['User', 'Email', 'Amount', 'Bank', 'Reference', 'Status', 'Date']], body: depositsList.map(x => [x.userName || '-', x.userEmail || '-', `${x.amount} YER`, x.bankName || '-', x.referenceNumber || '-', x.status, x.createdAt ? new Date(x.createdAt).toLocaleDateString("en-US") : '-']), styles: { fontSize: 7, cellPadding: 2 }, headStyles: { fillColor: [27, 122, 61], textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [240, 248, 240] } }); d.save(`AppleNet-Deposits-${Date.now()}.pdf`); toast.success("تم إنشاء تقرير الودائع PDF"); }} className="w-full flex items-center gap-3 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-4 transition-colors text-right">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center flex-shrink-0"><Wallet className="w-5 h-5 text-white" /></div>
+                      <div className="flex-1"><p className="text-sm font-bold text-gray-900 dark:text-white">تقرير الودائع</p><p className="text-[10px] text-gray-500">جميع طلبات الإيداع ({depositsList.length} طلب)</p></div>
+                      <Download className="w-5 h-5 text-amber-500" />
+                    </button>
+                    <button onClick={() => { const d = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }); d.setFontSize(18); d.setFont("helvetica", "bold"); d.text("Apple.NET - Commissions Report", 148, 15, { align: "center" }); const tc = commEntriesList.reduce((s, c) => s + (c.commissionAmount || 0), 0); const uc = commEntriesList.filter(c => !c.isPaid).reduce((s, c) => s + (c.commissionAmount || 0), 0); d.setFontSize(9); d.setFont("helvetica", "normal"); d.text(`Total: ${fmt(tc)} YER | Unpaid: ${fmt(uc)} YER`, 148, 22, { align: "center" }); autoTable(d, { startY: 28, head: [['Manager', 'Network', 'Tier', 'Price', 'Rate', 'Commission', 'Paid', 'Date']], body: commEntriesList.map(c => [c.managerName || '-', c.networkName || '-', c.cardTier || '-', `${c.cardPrice} YER`, `${c.commissionRate}%`, `${c.commissionAmount} YER`, c.isPaid ? 'YES' : 'NO', c.soldAt ? new Date(c.soldAt).toLocaleDateString("en-US") : '-']), styles: { fontSize: 7, cellPadding: 2 }, headStyles: { fillColor: [27, 122, 61], textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [240, 248, 240] } }); d.save(`AppleNet-Commissions-${Date.now()}.pdf`); toast.success("تم إنشاء تقرير العمولات PDF"); }} className="w-full flex items-center gap-3 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/30 border border-purple-200 dark:border-purple-800 rounded-2xl p-4 transition-colors text-right">
+                      <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center flex-shrink-0"><Banknote className="w-5 h-5 text-white" /></div>
+                      <div className="flex-1"><p className="text-sm font-bold text-gray-900 dark:text-white">تقرير العمولات</p><p className="text-[10px] text-gray-500">سجل العمولات ({commEntriesList.length} سجل)</p></div>
+                      <Download className="w-5 h-5 text-purple-600" />
+                    </button>
+                    <button onClick={() => { const ac = redeemCodesList.filter(c => !c.isUsed); const d = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }); d.setFontSize(18); d.setFont("helvetica", "bold"); d.text("Apple.NET - Redeem Codes Report", 148, 15, { align: "center" }); d.setFontSize(9); d.setFont("helvetica", "normal"); d.text(`Total: ${redeemCodesList.length} | Available: ${ac.length}`, 148, 22, { align: "center" }); autoTable(d, { startY: 28, head: [['Code', 'Amount', 'Status', 'Used By', 'Date']], body: redeemCodesList.map(c => [c.code, `${c.amount} YER`, c.isUsed ? 'USED' : 'AVAIL', c.usedByName || '-', c.usedAt ? new Date(c.usedAt).toLocaleDateString("en-US") : '-']), styles: { fontSize: 7, cellPadding: 2 }, headStyles: { fillColor: [27, 122, 61], textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [240, 248, 240] } }); d.save(`AppleNet-RedeemCodes-${Date.now()}.pdf`); toast.success("تم إنشاء تقرير أكواد الشحن PDF"); }} className="w-full flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 border border-orange-200 dark:border-orange-800 rounded-2xl p-4 transition-colors text-right">
+                      <div className="w-10 h-10 rounded-xl bg-orange-500 flex items-center justify-center flex-shrink-0"><Gift className="w-5 h-5 text-white" /></div>
+                      <div className="flex-1"><p className="text-sm font-bold text-gray-900 dark:text-white">تقرير أكواد الشحن</p><p className="text-[10px] text-gray-500">جميع أكواد الشحن ({redeemCodesList.length} كود)</p></div>
+                      <Download className="w-5 h-5 text-orange-500" />
+                    </button>
+                    <button onClick={() => { const d = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }); d.setFontSize(18); d.setFont("helvetica", "bold"); d.text("Apple.NET - Starlink Orders Report", 148, 15, { align: "center" }); d.setFontSize(9); d.setFont("helvetica", "normal"); d.text(`Total Orders: ${starOrdersList.length}`, 148, 22, { align: "center" }); autoTable(d, { startY: 28, head: [['User', 'Phone', 'Product', 'Price', 'Status', 'Date']], body: starOrdersList.map(o => [o.userName || '-', o.userPhone || '-', o.productName || '-', `$${o.priceUSD}`, o.status, o.createdAt ? new Date(o.createdAt).toLocaleDateString("en-US") : '-']), styles: { fontSize: 7, cellPadding: 2 }, headStyles: { fillColor: [27, 122, 61], textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [240, 248, 240] } }); d.save(`AppleNet-StarlinkOrders-${Date.now()}.pdf`); toast.success("تم إنشاء تقرير طلبات Starlink PDF"); }} className="w-full flex items-center gap-3 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-4 transition-colors text-right">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center flex-shrink-0"><Satellite className="w-5 h-5 text-white" /></div>
+                      <div className="flex-1"><p className="text-sm font-bold text-gray-900 dark:text-white">تقرير طلبات Starlink</p><p className="text-[10px] text-gray-500">جميع طلبات ستارلينك ({starOrdersList.length} طلب)</p></div>
+                      <Download className="w-5 h-5 text-indigo-600" />
+                    </button>
+                    <button onClick={() => { const ac = redeemCodesList.filter(c => !c.isUsed); if (ac.length === 0) { toast.error("لا توجد أكواد متاحة"); return; } generateGiftCardPDF(ac.map(c => ({ code: c.code, amount: c.amount })), "AppleNet Available Codes"); }} className="w-full flex items-center gap-3 bg-rose-50 dark:bg-rose-900/20 hover:bg-rose-100 dark:hover:bg-rose-900/30 border border-rose-200 dark:border-rose-800 rounded-2xl p-4 transition-colors text-right">
+                      <div className="w-10 h-10 rounded-xl bg-rose-500 flex items-center justify-center flex-shrink-0"><FileCheck className="w-5 h-5 text-white" /></div>
+                      <div className="flex-1"><p className="text-sm font-bold text-gray-900 dark:text-white">PDF أكواد بطاقات الشحن (بطاقات مرئية)</p><p className="text-[10px] text-gray-500">إنشاء PDF بتصميم بطاقات أكواد الشحن</p></div>
+                      <Download className="w-5 h-5 text-rose-500" />
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {activeTab === "content" && (
               <motion.div key="content" variants={sectionVariants} initial="initial" animate="animate" exit="exit" transition={iOSSpring.gentle} className="space-y-4">
                 {[

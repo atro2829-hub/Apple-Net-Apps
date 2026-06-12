@@ -71,3 +71,4 @@ google-services.json
 upload/*.json
 android/app/google-services.json
 android/app/src/main/assets/google-services.json
+tool-results/
