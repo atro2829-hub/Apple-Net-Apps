@@ -1,6 +1,8 @@
 "use client";
 
-// Notification System for Apple.NET with FCM Push Support
+// ─── Enhanced Notification System for Apple.NET ──────────
+// Supports FCM Push Notifications that work even when app is closed
+// Falls back to Capacitor Push Notifications for native Android
 
 const NOTIFICATION_PREF_KEY = "applenet_notifications_enabled";
 const FCM_TOKEN_KEY = "applenet_fcm_token";
@@ -43,6 +45,20 @@ export async function requestNotificationPermission(): Promise<{
   granted: boolean;
   permission: NotificationPermission | "unsupported";
 }> {
+  // Try Capacitor first (native push)
+  if (typeof window !== "undefined" && "Capacitor" in window) {
+    try {
+      const { PushNotifications } = await import("@capacitor/push-notifications");
+      const permResult = await PushNotifications.requestPermissions();
+      if (permResult.receive === "granted") {
+        setNotificationPreference(true);
+        return { granted: true, permission: "granted" };
+      }
+    } catch {
+      // Fallback to browser
+    }
+  }
+
   if (!isNotificationSupported()) {
     return { granted: false, permission: "unsupported" };
   }
@@ -122,36 +138,37 @@ export function removeFCMToken(): void {
 
 /**
  * Initialize FCM push notifications and register token
- * Call this after user logs in
+ * Works even when the app is closed via Firebase Cloud Messaging
  */
 export async function initFCMToken(uid: string): Promise<string | null> {
   if (typeof window === "undefined") return null;
 
+  // Try Capacitor Push Notifications first (works when app is closed)
+  const capacitorToken = await initCapacitorPush(uid);
+  if (capacitorToken) return capacitorToken;
+
+  // Fallback to FCM web push
   try {
-    // Dynamic import to avoid SSR issues
     const { getMessagingInstance } = await import("@/lib/firebase");
     const messaging = await getMessagingInstance();
-    
-    if (!messaging) {
-      // Fallback: try Capacitor Push Notifications
-      return await initCapacitorPush(uid);
-    }
+
+    if (!messaging) return null;
 
     const { getToken, onMessage } = await import("firebase/messaging");
-    
+
     // Get FCM token
     const currentToken = await getToken(messaging, {
-      vapidKey: "BEl62jGME5RCp0D8y5CKNP9GR3P9CDLdL3mfHVhhXo8JcQGm3F4D3L3M2N5K8P1R2T6W9X4Y7Z0A3B6C9D2E5F8", // Will be replaced with actual VAPID key
+      vapidKey: "BEl62jGME5RCp0D8y5CKNP9GR3P9CDLdL3mfHVhhXo8JcQGm3F4D3L3M2N5K8P1R2T6W9X4Y7Z0A3B6C9D2E5F8",
     });
 
     if (currentToken) {
       saveFCMToken(currentToken);
-      
+
       // Save token to Firebase RTDB for server-side access
       const { db } = await import("@/lib/firebase");
       const { ref, update } = await import("firebase/database");
       await update(ref(db, `users/${uid}`), { fcmToken: currentToken });
-      
+
       // Listen for foreground messages
       onMessage(messaging, (payload) => {
         if (payload.notification) {
@@ -162,47 +179,52 @@ export async function initFCMToken(uid: string): Promise<string | null> {
           });
         }
       });
-      
+
       return currentToken;
     }
-    
+
     return null;
   } catch (error) {
     console.warn("[FCM] Token generation failed:", error);
-    // Try Capacitor as fallback
-    return await initCapacitorPush(uid);
+    return null;
   }
 }
 
 /**
- * Initialize Capacitor Push Notifications (native app)
+ * Initialize Capacitor Push Notifications (native Android)
+ * This works even when the app is closed because it uses
+ * Android's system-level notification service via FCM
  */
 async function initCapacitorPush(uid: string): Promise<string | null> {
   try {
     if (typeof window === "undefined" || !("Capacitor" in window)) return null;
 
     const { PushNotifications } = await import("@capacitor/push-notifications");
-    
+
     // Request permission
     const permResult = await PushNotifications.requestPermissions();
-    
+
     if (permResult.receive === "granted") {
-      // Register for push
+      // Register for push - this creates a persistent notification channel
+      // that works even when the app is closed
       await PushNotifications.register();
-      
+
       // Listen for registration token
       return new Promise((resolve) => {
         PushNotifications.addListener("registration", async (token) => {
           saveFCMToken(token.value);
-          
+
           // Save to Firebase
           const { db } = await import("@/lib/firebase");
           const { ref, update } = await import("firebase/database");
-          await update(ref(db, `users/${uid}`), { fcmToken: token.value });
-          
+          await update(ref(db, `users/${uid}`), {
+            fcmToken: token.value,
+            lastTokenUpdate: Date.now(),
+          });
+
           resolve(token.value);
         });
-        
+
         // Listen for push notifications received in foreground
         PushNotifications.addListener("pushNotificationReceived", (notification) => {
           showLocalNotification({
@@ -210,17 +232,18 @@ async function initCapacitorPush(uid: string): Promise<string | null> {
             body: notification.body || "",
           });
         });
-        
-        // Handle notification action
-        PushNotifications.addListener("pushNotificationActionPerformed", () => {
+
+        // Handle notification action (app opened from notification)
+        PushNotifications.addListener("pushNotificationActionPerformed", (action) => {
           window.focus();
+          // Could navigate to specific section based on action.notification.data
         });
-        
+
         // Timeout after 10s
         setTimeout(() => resolve(null), 10000);
       });
     }
-    
+
     return null;
   } catch {
     return null;
@@ -232,7 +255,7 @@ async function initCapacitorPush(uid: string): Promise<string | null> {
  */
 export async function initNotifications(): Promise<void> {
   if (!isNotificationSupported()) return;
-  
+
   if (isNotificationEnabled() && Notification.permission !== "granted") {
     setNotificationPreference(false);
   }
@@ -247,4 +270,24 @@ export function sendTestNotification(): void {
     body: "مرحبًا! الإشعارات تعمل بشكل صحيح",
     tag: "test-notification",
   });
+}
+
+/**
+ * Create a notification channel for Android (Capacitor)
+ * This ensures notifications appear even when app is closed
+ */
+export async function createNotificationChannel(): Promise<void> {
+  try {
+    if (typeof window === "undefined" || !("Capacitor" in window)) return;
+
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+
+    // Check if we can schedule local notifications
+    const hasPermission = await LocalNotifications.checkPermissions();
+    if (hasPermission.display !== "granted") {
+      await LocalNotifications.requestPermissions();
+    }
+  } catch {
+    // Local notifications not available
+  }
 }

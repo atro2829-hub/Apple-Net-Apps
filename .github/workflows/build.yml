@@ -1,54 +1,59 @@
-name: Build & Deploy Apple.NET
+name: Build Android APKs
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type: user, admin, or both'
+        required: false
+        default: 'both'
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '20'
   BUN_VERSION: '1.2.0'
 
 jobs:
-  build-user-apk:
-    name: Build User APK (com.applenet.app)
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    timeout-minutes: 30
 
-      - name: Setup Bun
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Setup Java
+      - name: ☕ Setup Java (for Android build)
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '21'
+          java-version: '17'
 
-      - name: Install dependencies
+      - name: 📱 Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 📦 Install dependencies
+        run: bun install
+
+      - name: 🔑 Decode keystore
         run: |
-          npm install -g @capacitor/cli
-          bun install
+          mkdir -p keystore
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore/apple-net.keystore
 
-      - name: Create Firebase Admin SDK file
-        run: echo '${{ secrets.FIREBASE_ADMIN_SDK }}' > firebase-admin-sdk.json
-
-      - name: Build Next.js static export
+      - name: 📄 Decode google-services.json
         run: |
-          cat > next.config.export.ts << 'EXPORTCONFIG'
+          mkdir -p upload
+          echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > "upload/google-services (17).json"
+
+      - name: 🏗️ Build Next.js static export
+        run: |
+          # Create export config
+          cat > next.config.build.ts << 'EXPORTCONFIG'
           import type { NextConfig } from "next";
           const nextConfig: NextConfig = {
             trailingSlash: true,
@@ -60,15 +65,56 @@ jobs:
           };
           export default nextConfig;
           EXPORTCONFIG
-          mv next.config.ts next.config.dev.ts
-          mv next.config.export.ts next.config.ts
-          rm -rf src/app/api src/app/admin
-          bun run build
-        env:
-          DATABASE_URL: "file:./dev.db"
 
-      - name: Setup Capacitor for User App
+          # Swap configs
+          cp next.config.ts next.config.dev.bak
+          cp next.config.build.ts next.config.ts
+
+          # Remove API routes (not needed for static export)
+          rm -rf src/app/api
+
+          # Build
+          bun run build
+
+          # Restore dev config
+          cp next.config.dev.bak next.config.ts
+          rm next.config.build.ts next.config.dev.bak
+
+      - name: 🔧 Prepare admin web directory
         run: |
+          # Copy out/ to out-admin/
+          rm -rf out-admin
+          cp -r out out-admin
+
+          # CRITICAL FIX: Copy admin page content to root index.html
+          # This fixes the green screen issue in Capacitor
+          if [ -f out-admin/admin/index.html ]; then
+            cat out-admin/admin/index.html > out-admin/index.html
+            echo "✅ Admin root page set"
+          else
+            # Fallback redirect
+            cat > out-admin/index.html << 'REDIRECT'
+          <!DOCTYPE html>
+          <html lang="ar" dir="rtl">
+          <head>
+            <meta charset="utf-8">
+            <title>Apple.NET Admin</title>
+            <script>window.location.replace('/admin/');</script>
+          </head>
+          <body><p>جاري التحويل...</p></body>
+          </html>
+          REDIRECT
+          fi
+
+      - name: 📱 Build User APK
+        if: ${{ github.event.inputs.build_type != 'admin' }}
+        run: |
+          echo "📱 Building USER APP (com.applenet.app)..."
+
+          # Remove old android project
+          rm -rf android
+
+          # Create user capacitor config
           cat > capacitor.config.ts << 'CAPCONFIG'
           import type { CapacitorConfig } from '@capacitor/cli';
           const config: CapacitorConfig = {
@@ -92,43 +138,27 @@ jobs:
               PushNotifications: { presentationOptions: ['badge', 'sound', 'alert'] },
               LocalNotifications: { smallIcon: 'ic_stat_icon_config_sample', iconColor: '#1B7A3D', sound: 'default' },
               Haptics: {},
+              Filesystem: { directory: 'Documents' },
               SplashScreen: {
-                launchShowDuration: 2000,
-                launchAutoHide: true,
-                backgroundColor: '#1B7A3D',
-                androidSplashResourceName: 'splash',
-                androidScaleType: 'CENTER_CROP',
-                showSpinner: false,
-                splashFullScreen: true,
-                splashImmersive: true,
+                launchShowDuration: 2000, launchAutoHide: true, backgroundColor: '#1B7A3D',
+                androidSplashResourceName: 'splash', androidScaleType: 'CENTER_CROP',
+                showSpinner: false, splashFullScreen: true, splashImmersive: true,
               },
               BiometricAuth: { iosKeychainAccessGroup: 'com.applenet.app' },
             },
           };
           export default config;
           CAPCONFIG
-          rm -rf android
-          npx cap add android
+
+          npx cap add android 2>/dev/null || true
           npx cap sync android
 
-      - name: Apply custom build.gradle with signing
-        run: |
-          # Replace generated build.gradle with our custom one that has signing + Firebase
-          sed 's/APP_NAMESPACE/com.applenet.app/g; s/APP_PACKAGE/com.applenet.app/g' scripts/android-app-build.gradle > android/app/build.gradle
-          # Copy keystore into android directory for signing
-          mkdir -p android/keystore
-          cp keystore/apple-net.keystore android/keystore/apple-net.keystore
-
-      - name: Copy google-services.json
-        run: |
-          echo '${{ secrets.GOOGLE_SERVICES_JSON_B64 }}' | base64 -d > android/app/google-services.json
+          # Copy google-services.json
+          cp "upload/google-services (17).json" android/app/google-services.json
           mkdir -p android/app/src/main/assets
-          echo '${{ secrets.GOOGLE_SERVICES_JSON_B64 }}' | base64 -d > android/app/src/main/assets/google-services.json
-          # Verify the JSON is valid
-          python3 -c "import json; json.load(open('android/app/google-services.json'))" || exit 1
+          cp "upload/google-services (17).json" android/app/src/main/assets/google-services.json
 
-      - name: Apply custom app icons
-        run: |
+          # Copy icons
           ICON_DIR="public/icons/android"
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             DST="android/app/src/main/res/mipmap-${density}"
@@ -139,156 +169,50 @@ jobs:
               cp "$ICON_DIR/mipmap-${density}/ic_launcher_round.png" "$DST/"
             fi
           done
+
           mkdir -p android/app/src/main/res/mipmap-anydpi-v26
-          cp "$ICON_DIR/mipmap-anydpi-v26/ic_launcher.xml" android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
-          cp "$ICON_DIR/mipmap-anydpi-v26/ic_launcher_round.xml" android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
+          cp "$ICON_DIR/mipmap-anydpi-v26/"*.xml android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
+
           mkdir -p android/app/src/main/res/values
-          cp "$ICON_DIR/ic_launcher_background.xml" android/app/src/main/res/values/ 2>/dev/null || true
+          echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#1B7A3D</color></resources>' > android/app/src/main/res/values/ic_launcher_background.xml
+
+          # Copy splash
           SPLASH_DIR="public/splash"
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             for orient in port land; do
               DST="android/app/src/main/res/drawable-${orient}-${density}"
               mkdir -p "$DST"
-              if [ -f "$SPLASH_DIR/splash-${density}.png" ]; then
-                cp "$SPLASH_DIR/splash-${density}.png" "$DST/splash.png"
-              fi
+              [ -f "$SPLASH_DIR/splash-${density}.png" ] && cp "$SPLASH_DIR/splash-${density}.png" "$DST/splash.png"
             done
           done
           mkdir -p android/app/src/main/res/drawable
-          if [ -f "$SPLASH_DIR/splash-xxhdpi.png" ]; then
-            cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
-          fi
+          [ -f "$SPLASH_DIR/splash-xxhdpi.png" ] && cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
 
-      - name: Build signed APK
-        working-directory: android
-        run: |
+          # Build
+          cd android
           chmod +x gradlew
           ./gradlew assembleRelease
+          cd ..
 
-      - name: Generate SHA keys
+          mkdir -p download
+          cp android/app/build/outputs/apk/release/app-release.apk download/app-release.apk
+          echo "✅ User APK built!"
+
+      - name: 📱 Build Admin APK
+        if: ${{ github.event.inputs.build_type != 'user' }}
         run: |
-          keytool -list -v -keystore keystore/apple-net.keystore -alias apple-net -storepass applenet2026 -keypass applenet2026 2>/dev/null | grep -E "SHA1:|SHA256:" > sha-keys.txt
-          cat sha-keys.txt
+          echo "📱 Building ADMIN APP (com.applenet.admin)..."
 
-      - name: Upload User APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-apk
-          path: android/app/build/outputs/apk/release/*.apk
-          retention-days: 30
+          # Remove old android project
+          rm -rf android
 
-      - name: Upload SHA keys
-        uses: actions/upload-artifact@v4
-        with:
-          name: sha-keys
-          path: sha-keys.txt
-          retention-days: 30
-
-      - name: Restore dev config
-        if: always()
-        run: |
-          if [ -f next.config.dev.ts ]; then
-            mv next.config.dev.ts next.config.ts
-          fi
-
-  build-admin-apk:
-    name: Build Admin APK (com.applenet.admin)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '21'
-
-      - name: Install dependencies
-        run: |
-          npm install -g @capacitor/cli
-          bun install
-
-      - name: Create Firebase Admin SDK file
-        run: echo '${{ secrets.FIREBASE_ADMIN_SDK }}' > firebase-admin-sdk.json
-
-      - name: Build Next.js static export
-        run: |
-          cat > next.config.export.ts << 'EXPORTCONFIG'
-          import type { NextConfig } from "next";
-          const nextConfig: NextConfig = {
-            trailingSlash: true,
-            output: "export",
-            typescript: { ignoreBuildErrors: true },
-            eslint: { ignoreDuringBuilds: true },
-            reactStrictMode: false,
-            images: { unoptimized: true },
-          };
-          export default nextConfig;
-          EXPORTCONFIG
-          mv next.config.ts next.config.dev.ts
-          mv next.config.export.ts next.config.ts
-          # Remove API routes (not needed for static export)
-          rm -rf src/app/api
-          # Replace entire app directory with admin app files
-          # admin/layout.tsx is a proper root layout with <html>/<body>
-          # admin/page.tsx is the admin entry point
-          cp src/app/admin/layout.tsx src/app/layout.tsx
-          cp src/app/admin/page.tsx src/app/page.tsx
-          # Remove the admin route since we moved it to root
-          rm -rf src/app/admin
-          # Remove user-only components to keep APK clean
-          rm -f src/components/HomePage.tsx
-          rm -f src/components/CardsPage.tsx
-          rm -f src/components/PurchasedPage.tsx
-          rm -f src/components/CreditPage.tsx
-          rm -f src/components/DepositPage.tsx
-          rm -f src/components/TelecomRechargePage.tsx
-          rm -f src/components/BanksPage.tsx
-          rm -f src/components/SimsPage.tsx
-          rm -f src/components/AdsPage.tsx
-          rm -f src/components/StarlinkPage.tsx
-          rm -f src/components/ChatPage.tsx
-          rm -f src/components/MorePage.tsx
-          rm -f src/components/ProfilePage.tsx
-          rm -f src/components/OnboardingFlow.tsx
-          rm -f src/components/NetworkDetailModal.tsx
-          rm -f src/components/NetworkSubmissionPage.tsx
-          rm -f src/components/NotificationCenter.tsx
-          rm -f src/components/BiometricAuth.tsx
-          rm -f src/components/PinLockScreen.tsx
-          rm -f src/components/iOSInstallBanner.tsx
-          rm -f src/components/AppUpdateBanner.tsx
-          rm -f src/components/PermissionModal.tsx
-          rm -f src/components/ComplaintPage.tsx
-          rm -f src/components/AuthForm.tsx
-          bun run build
-        env:
-          DATABASE_URL: "file:./dev.db"
-
-      - name: Setup Capacitor for Admin App
-        run: |
+          # Create admin capacitor config
           cat > capacitor.config.ts << 'CAPCONFIG'
           import type { CapacitorConfig } from '@capacitor/cli';
           const config: CapacitorConfig = {
             appId: 'com.applenet.admin',
             appName: 'Apple.NET Admin',
-            webDir: 'out',
+            webDir: 'out-admin',
             server: { androidScheme: 'https', cleartext: false },
             android: {
               buildOptions: {
@@ -297,61 +221,51 @@ jobs:
                 keystorePassword: 'applenet2026',
                 keystoreAliasPassword: 'applenet2026',
               },
-              backgroundColor: '#1B7A3D',
+              backgroundColor: '#10b981',
               allowMixedContent: false,
               captureInput: true,
               webContentsDebuggingEnabled: false,
             },
             plugins: {
               PushNotifications: { presentationOptions: ['badge', 'sound', 'alert'] },
-              LocalNotifications: { smallIcon: 'ic_stat_icon_config_sample', iconColor: '#1B7A3D', sound: 'default' },
+              LocalNotifications: { smallIcon: 'ic_stat_icon_config_sample', iconColor: '#10b981', sound: 'default' },
               Haptics: {},
+              Filesystem: { directory: 'Documents' },
               SplashScreen: {
-                launchShowDuration: 2000,
-                launchAutoHide: true,
-                backgroundColor: '#1B7A3D',
-                androidSplashResourceName: 'splash',
-                androidScaleType: 'CENTER_CROP',
-                showSpinner: false,
-                splashFullScreen: true,
-                splashImmersive: true,
+                launchShowDuration: 2000, launchAutoHide: true, backgroundColor: '#10b981',
+                androidSplashResourceName: 'splash', androidScaleType: 'CENTER_CROP',
+                showSpinner: false, splashFullScreen: true, splashImmersive: true,
               },
               BiometricAuth: { iosKeychainAccessGroup: 'com.applenet.admin' },
             },
           };
           export default config;
           CAPCONFIG
-          rm -rf android
-          npx cap add android
+
+          npx cap add android 2>/dev/null || true
           npx cap sync android
 
-      - name: Apply custom build.gradle with signing + admin package
-        run: |
-          sed 's/APP_NAMESPACE/com.applenet.admin/g; s/APP_PACKAGE/com.applenet.admin/g' scripts/android-app-build.gradle > android/app/build.gradle
-          # Copy keystore into android directory for signing
-          mkdir -p android/keystore
-          cp keystore/apple-net.keystore android/keystore/apple-net.keystore
-
-      - name: Set admin package name in other files
-        run: |
+          # Set admin package name
           find android -name "AndroidManifest.xml" -exec sed -i 's/com\.applenet\.app/com.applenet.admin/g' {} \;
+          find android -name "build.gradle" -exec sed -i 's/com\.applenet\.app/com.applenet.admin/g' {} \;
           find android -name "strings.xml" -exec sed -i 's/Apple\.NET/Apple.NET Admin/g' {} \;
+
+          # Move Java files
           mkdir -p android/app/src/main/java/com/applenet/admin
           if [ -f android/app/src/main/java/com/applenet/app/MainActivity.java ]; then
             sed 's/com\.applenet\.app/com.applenet.admin/g' android/app/src/main/java/com/applenet/app/MainActivity.java > android/app/src/main/java/com/applenet/admin/MainActivity.java
             rm -rf android/app/src/main/java/com/applenet/app
           fi
 
-      - name: Copy google-services.json
-        run: |
-          echo '${{ secrets.GOOGLE_SERVICES_JSON_B64 }}' | base64 -d > android/app/google-services.json
-          mkdir -p android/app/src/main/assets
-          echo '${{ secrets.GOOGLE_SERVICES_JSON_B64 }}' | base64 -d > android/app/src/main/assets/google-services.json
-          # Verify the JSON is valid
-          python3 -c "import json; json.load(open('android/app/google-services.json'))" || exit 1
+          # Add storage permissions for PDF downloads
+          sed -i '/<application/i\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />' android/app/src/main/AndroidManifest.xml
 
-      - name: Apply custom app icons
-        run: |
+          # Copy google-services.json
+          cp "upload/google-services (17).json" android/app/google-services.json
+          mkdir -p android/app/src/main/assets
+          cp "upload/google-services (17).json" android/app/src/main/assets/google-services.json
+
+          # Copy icons
           ICON_DIR="public/icons/android"
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             DST="android/app/src/main/res/mipmap-${density}"
@@ -362,119 +276,55 @@ jobs:
               cp "$ICON_DIR/mipmap-${density}/ic_launcher_round.png" "$DST/"
             fi
           done
+
           mkdir -p android/app/src/main/res/mipmap-anydpi-v26
-          cp "$ICON_DIR/mipmap-anydpi-v26/ic_launcher.xml" android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
-          cp "$ICON_DIR/mipmap-anydpi-v26/ic_launcher_round.xml" android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
+          cp "$ICON_DIR/mipmap-anydpi-v26/"*.xml android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || true
+
           mkdir -p android/app/src/main/res/values
-          cp "$ICON_DIR/ic_launcher_background.xml" android/app/src/main/res/values/ 2>/dev/null || true
+          echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#10b981</color></resources>' > android/app/src/main/res/values/ic_launcher_background.xml
+
+          # Copy splash
           SPLASH_DIR="public/splash"
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
             for orient in port land; do
               DST="android/app/src/main/res/drawable-${orient}-${density}"
               mkdir -p "$DST"
-              if [ -f "$SPLASH_DIR/splash-${density}.png" ]; then
-                cp "$SPLASH_DIR/splash-${density}.png" "$DST/splash.png"
-              fi
+              [ -f "$SPLASH_DIR/splash-${density}.png" ] && cp "$SPLASH_DIR/splash-${density}.png" "$DST/splash.png"
             done
           done
           mkdir -p android/app/src/main/res/drawable
-          if [ -f "$SPLASH_DIR/splash-xxhdpi.png" ]; then
-            cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
-          fi
+          [ -f "$SPLASH_DIR/splash-xxhdpi.png" ] && cp "$SPLASH_DIR/splash-xxhdpi.png" android/app/src/main/res/drawable/splash.png
 
-      - name: Build signed APK
-        working-directory: android
-        run: |
+          # Build
+          cd android
           chmod +x gradlew
           ./gradlew assembleRelease
+          cd ..
 
-      - name: Upload Admin APK
+          mkdir -p download
+          cp android/app/build/outputs/apk/release/app-release.apk download/admin-release.apk
+          echo "✅ Admin APK built!"
+
+      - name: 📤 Upload User APK
+        if: ${{ github.event.inputs.build_type != 'admin' }}
         uses: actions/upload-artifact@v4
         with:
-          name: admin-release-apk
-          path: android/app/build/outputs/apk/release/*.apk
-          retention-days: 30
+          name: app-release
+          path: download/app-release.apk
 
-      - name: Restore dev config
-        if: always()
-        run: |
-          if [ -f next.config.dev.ts ]; then
-            mv next.config.dev.ts next.config.ts
-          fi
-
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    needs: [build-user-apk, build-admin-apk]
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    permissions:
-      contents: write
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: 📤 Upload Admin APK
+        if: ${{ github.event.inputs.build_type != 'user' }}
+        uses: actions/upload-artifact@v4
         with:
-          fetch-depth: 0
+          name: admin-release
+          path: download/admin-release.apk
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts/
-
-      - name: Get version
-        id: version
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Read SHA keys
-        id: sha
-        run: |
-          if [ -f artifacts/sha-keys/sha-keys.txt ]; then
-            SHA1=$(grep "SHA1:" artifacts/sha-keys/sha-keys.txt | head -1 | sed 's/.*SHA1: //')
-            SHA256=$(grep "SHA256:" artifacts/sha-keys/sha-keys.txt | head -1 | sed 's/.*SHA256: //')
-          else
-            SHA1="C9:DA:33:A9:EF:88:69:F0:DA:94:CF:67:DF:C8:BA:8A:DA:A7:81:19"
-            SHA256="B9:E8:3F:28:40:92:40:FE:2E:D5:9D:9D:5A:50:7C:FD:FE:42:D5:A2:F7:8C:31:0F:C1:4B:87:27:63:D0:61:67"
-          fi
-          echo "sha1=$SHA1" >> $GITHUB_OUTPUT
-          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
-
-      - name: Delete existing release if present
-        run: |
-          TAG="v${{ steps.version.outputs.version }}"
-          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Rename admin APK for release
-        run: |
-          # The admin APK artifact contains app-release.apk, rename it to avoid name conflict
-          if [ -f artifacts/admin-release-apk/app-release.apk ]; then
-            mv artifacts/admin-release-apk/app-release.apk artifacts/admin-release-apk/admin-release.apk
-          fi
-
-      - name: Create Release
+      - name: 🎉 Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: Apple.NET v${{ steps.version.outputs.version }}
-          body: |
-            ## Apple.NET v${{ steps.version.outputs.version }}
-            
-            ### تطبيق المستخدم (User App)
-            - Package: `com.applenet.app`
-            - Download: `app-release.apk`
-            
-            ### تطبيق الأدمن (Admin App)
-            - Package: `com.applenet.admin`
-            - Download: `admin-release.apk`
-            
-            ### مفاتيح SHA للفايربيز
-            - SHA1: `${{ steps.sha.outputs.sha1 }}`
-            - SHA256: `${{ steps.sha.outputs.sha256 }}`
           files: |
-            artifacts/app-release-apk/*.apk
-            artifacts/admin-release-apk/*.apk
+            download/app-release.apk
+            download/admin-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

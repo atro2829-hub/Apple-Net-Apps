@@ -395,6 +395,18 @@ export interface TelecomPackage {
   createdAt: number;
 }
 
+// سجل النشاط
+export interface ActivityLogEntry {
+  id: string;
+  action: string;
+  performedBy: string;
+  performedByName: string;
+  targetId: string;
+  targetType: string;
+  details: string;
+  createdAt: number;
+}
+
 // عملية سداد اتصالات
 export interface TelecomTransaction {
   id: string;

@@ -53,28 +53,49 @@ rm next.config.build.ts next.config.dev.bak
 echo "✅ Static export completed: out/"
 
 # ─── Step 3: Prepare Admin Web Dir ───
+# CRITICAL FIX: Instead of redirect, copy admin page content to root
+# This fixes the green screen issue where Capacitor couldn't load /admin/ path
 if [ "$BUILD_TYPE" = "admin" ] || [ "$BUILD_TYPE" = "both" ]; then
   echo ""
-  echo "🔧 Preparing admin web directory..."
+  echo "🔧 Preparing admin web directory (root-level fix)..."
   
   # Copy out/ to out-admin/
   rm -rf out-admin
   cp -r out out-admin
   
-  # Replace index.html with a redirect to /admin/
-  cat > out-admin/index.html << 'REDIRECT'
+  # ─── ROOT-LEVEL FIX ───
+  # The admin app must load at "/" not "/admin/" for Capacitor
+  # Strategy: Copy admin HTML to root index.html and fix asset paths
+  
+  if [ -f out-admin/admin/index.html ]; then
+    # Read the admin page HTML
+    ADMIN_HTML=$(cat out-admin/admin/index.html)
+    
+    # Replace the root index.html with admin content
+    # The admin page references /_next/ which works from root
+    echo "$ADMIN_HTML" > out-admin/index.html
+    
+    echo "✅ Admin root page set (admin/index.html → index.html)"
+  else
+    echo "⚠️ Warning: out-admin/admin/index.html not found, using fallback redirect"
+    # Fallback: create a proper redirect that works in Capacitor
+    cat > out-admin/index.html << 'REDIRECT'
 <!DOCTYPE html>
-<html>
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0;url=/admin/">
   <title>Apple.NET Admin</title>
+  <script>
+    // Direct navigation for Capacitor compatibility
+    window.location.replace('/admin/');
+  </script>
 </head>
 <body>
-  <script>window.location.href = '/admin/';</script>
+  <p>جاري التحويل...</p>
 </body>
 </html>
 REDIRECT
+  fi
 
   echo "✅ Admin web directory prepared: out-admin/"
 fi
@@ -252,6 +273,7 @@ build_admin_app() {
   rm -rf android
   
   # Use admin capacitor config with webDir pointing to out-admin
+  # Includes Filesystem plugin for PDF downloads
   cat > capacitor.config.admin.ts << 'CAPCONFIG'
 import type { CapacitorConfig } from '@capacitor/cli';
 
@@ -270,7 +292,7 @@ const config: CapacitorConfig = {
       keystorePassword: 'applenet2026',
       keystoreAliasPassword: 'applenet2026',
     },
-    backgroundColor: '#1B7A3D',
+    backgroundColor: '#10b981',
     allowMixedContent: false,
     captureInput: true,
     webContentsDebuggingEnabled: false,
@@ -281,19 +303,25 @@ const config: CapacitorConfig = {
     },
     LocalNotifications: {
       smallIcon: 'ic_stat_icon_config_sample',
-      iconColor: '#1B7A3D',
+      iconColor: '#10b981',
       sound: 'default',
     },
     Haptics: {},
+    Filesystem: {
+      directory: 'Documents',
+    },
     SplashScreen: {
       launchShowDuration: 2000,
       launchAutoHide: true,
-      backgroundColor: '#1B7A3D',
+      backgroundColor: '#10b981',
       androidSplashResourceName: 'splash',
       androidScaleType: 'CENTER_CROP',
       showSpinner: false,
       splashFullScreen: true,
       splashImmersive: true,
+    },
+    BiometricAuth: {
+      iosKeychainAccessGroup: 'com.applenet.admin',
     },
   },
 };
@@ -321,6 +349,11 @@ CAPCONFIG
     rm -rf android/app/src/main/java/com/applenet/app
   fi
   
+  # Add WRITE_EXTERNAL_STORAGE permission for PDF downloads
+  if [ -f android/app/src/main/AndroidManifest.xml ]; then
+    sed -i '/<application/i\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />' android/app/src/main/AndroidManifest.xml
+  fi
+
   # Copy google-services.json for admin
   cp "$PROJECT_ROOT/upload/google-services (17).json" android/app/google-services.json
   mkdir -p android/app/src/main/assets
@@ -348,7 +381,7 @@ CAPCONFIG
   cat > android/app/src/main/res/values/ic_launcher_background.xml << 'BGXML'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1B7A3D</color>
+    <color name="ic_launcher_background">#10b981</color>
 </resources>
 BGXML
 
